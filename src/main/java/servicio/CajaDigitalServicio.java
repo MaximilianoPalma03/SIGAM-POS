@@ -99,6 +99,8 @@ public final class CajaDigitalServicio {
             try {
                 VentaServicio.comprobarCaja(c,cajaId,empleadoId);
                 long id=idAbierta(c,cajaId);
+                if(!entrada && resumen(c,cajaId).esperado().compareTo(monto)<0)
+                    throw new IllegalArgumentException("Saldo declarado de Mercado Pago insuficiente para la salida");
                 try(PreparedStatement p=c.prepareStatement(
                     "INSERT INTO MovimientoCajaDigital(caja_digital_id,empleado_id,tipo,monto,motivo) " +
                     "VALUES(?,?,?,?,?)")){

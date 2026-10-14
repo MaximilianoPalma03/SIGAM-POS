@@ -87,6 +87,9 @@ public final class CajaServicio {
             c.setAutoCommit(false);
             try {
                 VentaServicio.comprobarCaja(c,cajaId,empleadoId);
+                if("SALIDA".equals(movimiento.tipo()) &&
+                   resumen(c,cajaId).esperado().compareTo(movimiento.getMonto())<0)
+                    throw new IllegalArgumentException("Saldo en efectivo insuficiente para la salida");
                 try(PreparedStatement ps=c.prepareStatement("INSERT INTO MovimientoCaja(caja_id,empleado_id,tipo,monto,motivo) VALUES(?,?,?,?,?)")) {
                     ps.setLong(1,cajaId);ps.setLong(2,empleadoId);ps.setString(3,movimiento.tipo());
                     ps.setBigDecimal(4,movimiento.getMonto());ps.setString(5,movimiento.getMotivo());ps.executeUpdate();
