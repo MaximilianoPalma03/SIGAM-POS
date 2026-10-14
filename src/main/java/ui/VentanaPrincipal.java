@@ -326,19 +326,22 @@ public final class VentanaPrincipal extends JFrame {
         encabezado.add(estado,BorderLayout.CENTER);raiz.add(encabezado,BorderLayout.NORTH);
         JTextArea resumen=new JTextArea(9,45);resumen.setEditable(false);resumen.setFont(new Font(Font.MONOSPACED,Font.PLAIN,14));
         resumen.setBorder(BorderFactory.createEmptyBorder(10,10,10,10));
-        JPanel centro=new JPanel(new BorderLayout(8,8));centro.add(new JLabel("Resumen de caja y operaciones"),BorderLayout.NORTH);
+        JPanel centro=new JPanel(new BorderLayout(8,8));centro.add(new JLabel("Resumen de efectivo y Mercado Pago"),BorderLayout.NORTH);
         centro.add(new JScrollPane(resumen),BorderLayout.CENTER);raiz.add(centro,BorderLayout.CENTER);
         JPanel acciones=new JPanel(new FlowLayout(FlowLayout.LEFT,10,8));
         JButton abrir=new JButton("Iniciar jornada / Abrir caja"),entrada=new JButton("Registrar entrada (+)"),salida=new JButton("Registrar salida (-)"),
-            esperado=new JButton("Actualizar desglose"),historial=new JButton("Historial de movimientos"),cerrar=new JButton("Finalizar jornada (arqueo)");
-        for(JButton b:new JButton[]{abrir,entrada,salida,esperado,historial,cerrar})acciones.add(b);
+            esperado=new JButton("Actualizar desglose"),historial=new JButton("Historial de movimientos"),
+            movimientoDigital=new JButton("Movimiento Mercado Pago"),cerrar=new JButton("Finalizar jornada (arqueo)");
+        for(JButton b:new JButton[]{abrir,entrada,salida,movimientoDigital,esperado,historial,cerrar})acciones.add(b);
         JPanel pie=new JPanel(new BorderLayout());pie.add(acciones,BorderLayout.CENTER);
         pie.add(new JLabel("Cada movimiento solicita un importe y un motivo en un formulario independiente."),BorderLayout.SOUTH);
         raiz.add(pie,BorderLayout.SOUTH);
         Runnable actualizar=()->{
             if(caja.getText().isBlank()) {estado.setText("Sin caja activa · Iniciá una jornada para operar");resumen.setText("No hay caja abierta para esta sesión.");return;}
             try {estado.setText("Caja #"+caja.getText()+" · Empleado: "+sesion.nombre());
-                resumen.setText(desglose(cajas.resumen(cajaActual())));
+                String texto=desglose(cajas.resumen(cajaActual()));
+                CajaDigitalServicio.Resumen d=digital.resumen(cajaActual());
+                resumen.setText(texto+"\n\n"+desgloseDigital(d));
             } catch(Exception e){resumen.setText("No se pudo actualizar el resumen: "+e.getMessage());}
         };
         caja.getDocument().addDocumentListener(new DocumentListener(){
@@ -353,18 +356,26 @@ public final class VentanaPrincipal extends JFrame {
             if(asignados.isEmpty())throw new IllegalArgumentException("No tenés turnos activos asignados para hoy.");
             JComboBox<TurnoOpcion> lista=new JComboBox<>();
             for(Turno t:asignados)lista.addItem(new TurnoOpcion(t));
-            JTextField fondo=new JTextField("0,00");
-            JPanel formulario=form("Turno de hoy",lista,"Fondo inicial ($)",fondo);
+            CampoMoneda fondo=new CampoMoneda();
+            JCheckBox usarMp=new JCheckBox("Abrir también Mercado Pago (declarativo, sin API)");
+            CampoMoneda saldoMp=new CampoMoneda();saldoMp.setEnabled(false);
+            usarMp.addActionListener(ev->saldoMp.setEnabled(usarMp.isSelected()));
+            JPanel formulario=form("Turno de hoy",lista,"Fondo inicial en efectivo",fondo,
+                "Caja digital",usarMp,"Saldo inicial Mercado Pago",saldoMp);
             if(JOptionPane.showConfirmDialog(this,formulario,"Iniciar jornada",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;
             TurnoOpcion elegido=(TurnoOpcion)lista.getSelectedItem();
-            long id=cajas.abrir(elegido.turno().id(),sesion.empleadoId(),importe(fondo));
+            long id=cajas.abrir(elegido.turno().id(),sesion.empleadoId(),importe(fondo),
+                usarMp.isSelected(),usarMp.isSelected()?importe(saldoMp):BigDecimal.ZERO);
             caja.setText(String.valueOf(id));actualizar.run();mensaje("Jornada iniciada. Caja #"+id+" abierta.");
         }));
         entrada.addActionListener(e->ejecutar(()->{registrarMovimiento(true);actualizar.run();}));
         salida.addActionListener(e->ejecutar(()->{registrarMovimiento(false);actualizar.run();}));
         esperado.addActionListener(e->ejecutar(()->{cajaActual();actualizar.run();}));
+        movimientoDigital.addActionListener(e->ejecutar(()->{registrarDigital();actualizar.run();}));
         historial.addActionListener(e->ejecutar(()->{
-            long id=cajaActual();JTextArea area=new JTextArea(cajas.historial(id));area.setEditable(false);
+            long id=cajaActual();String datos=cajas.historial(id);
+            if(digital.habilitada(id))datos+="\n\n"+digital.historial(id);
+            JTextArea area=new JTextArea(datos);area.setEditable(false);
             area.setFont(new Font(Font.MONOSPACED,Font.PLAIN,12));
             JOptionPane.showMessageDialog(this,new JScrollPane(area),"Movimientos de caja #"+id,JOptionPane.INFORMATION_MESSAGE);
         }));
@@ -373,7 +384,7 @@ public final class VentanaPrincipal extends JFrame {
     }
     private void registrarMovimiento(boolean esEntrada) throws SQLException {
         long id=cajaActual();
-        JTextField monto=new JTextField(),motivo=new JTextField();
+        JTextField monto=new CampoMoneda(),motivo=new JTextField();
         String tipo=esEntrada?"entrada":"salida";
         JPanel formulario=form("Importe de "+tipo+" ($)",monto,"Motivo obligatorio",motivo);
         if(JOptionPane.showConfirmDialog(this,formulario,"Registrar "+tipo,JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;
@@ -386,6 +397,29 @@ public final class VentanaPrincipal extends JFrame {
             "Confirmar movimiento",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
         cajas.registrar(id,sesion.empleadoId(),esEntrada?new IngresoCaja(valor,descripcion,false):new EgresoCaja(valor,descripcion));
         mensaje("Movimiento registrado: "+Moneda.formato(valor));
+    }
+    private void registrarDigital() throws SQLException {
+        long id=cajaActual();
+        if(!digital.habilitada(id))throw new IllegalStateException("No está habilitada la caja digital de Mercado Pago");
+        JComboBox<String> tipo=new JComboBox<>(new String[]{"ENTRADA","SALIDA"});
+        CampoMoneda monto=new CampoMoneda();JTextField motivo=new JTextField();
+        JPanel panel=form("Movimiento",tipo,"Importe",monto,"Motivo",motivo);
+        if(JOptionPane.showConfirmDialog(this,panel,"Movimiento manual Mercado Pago",JOptionPane.OK_CANCEL_OPTION)
+            !=JOptionPane.OK_OPTION)return;
+        BigDecimal valor=monto.valor();
+        if(valor.signum()<=0)throw new IllegalArgumentException("El importe debe ser mayor que cero");
+        if(motivo.getText().isBlank())throw new IllegalArgumentException("Motivo obligatorio");
+        if(JOptionPane.showConfirmDialog(this,"Confirmar "+tipo.getSelectedItem()+" en Mercado Pago por "+Moneda.formato(valor)+"?",
+            "Confirmación",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
+        digital.registrarMovimientoManual(id,sesion.empleadoId(),"ENTRADA".equals(tipo.getSelectedItem()),valor,motivo.getText());
+    }
+    private String desgloseDigital(CajaDigitalServicio.Resumen d){
+        if(d==null)return "MERCADO PAGO: No habilitado en esta jornada";
+        return "MERCADO PAGO (declarado, sin conexion)\nSaldo inicial: "+Moneda.formato(d.inicial())+
+            "\nCobros por transferencia/QR: "+Moneda.formato(d.cobros())+
+            "\nEntradas manuales: "+Moneda.formato(d.entradas())+
+            "\nSalidas manuales: "+Moneda.formato(d.salidas())+
+            "\nSALDO DIGITAL ESPERADO: "+Moneda.formato(d.esperado());
     }
     private record TurnoOpcion(Turno turno) {
         @Override public String toString(){return turno.nombre()+" ("+turno.inicio()+"–"+turno.fin()+", "+turno.descripcionDias()+")";}
@@ -402,21 +436,52 @@ public final class VentanaPrincipal extends JFrame {
     private void finalizarJornada() throws SQLException {
         if(!confirmarSalir())return;
         long id=cajaActual();
-        CajaServicio.Resumen resumen=cajas.resumen(id);
-        JTextField contado=new JTextField(),proximo=new JTextField(),observaciones=new JTextField();
-        JTextArea detalle=new JTextArea(desglose(resumen));detalle.setEditable(false);detalle.setOpaque(false);
-        JPanel p=new JPanel(new BorderLayout(0,12));p.add(detalle,BorderLayout.NORTH);
-        p.add(form("Efectivo contado ($)",contado,"Fondo para el próximo turno ($)",proximo,"Observaciones (opcional)",observaciones),BorderLayout.CENTER);
-        if(JOptionPane.showConfirmDialog(this,p,"Arqueo y cierre obligatorio",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;
-        BigDecimal diferencia=cajas.cerrar(id,sesion.empleadoId(),importe(contado),importe(proximo),observaciones.getText());
-        caja.setText("");
-        carrito.clear();refrescarCarrito();
-        mensaje("Caja y jornada cerradas. Diferencia del arqueo: "+Moneda.formato(diferencia)+". Se cerrará tu sesión.");
+        CajaServicio.Resumen r=cajas.resumen(id);
+        CajaDigitalServicio.Resumen d=digital.resumen(id);
+        CampoMoneda contado=new CampoMoneda(r.esperado()),proximo=new CampoMoneda(),
+            digitalContado=new CampoMoneda(d==null?BigDecimal.ZERO:d.esperado()),digitalProximo=new CampoMoneda();
+        JTextField observaciones=new JTextField();
+        JPanel p=new JPanel(new BorderLayout(8,8));
+        JTextArea detalle=new JTextArea(desglose(r)+"\n\n"+desgloseDigital(d));
+        detalle.setEditable(false);detalle.setRows(12);detalle.setFont(new Font(Font.MONOSPACED,Font.PLAIN,12));
+        p.add(new JScrollPane(detalle),BorderLayout.NORTH);
+        JPanel efectivo=form("Efectivo contado",contado,"Fondo para siguiente turno",proximo);
+        JButton billetes=new JButton("Contar billetes y monedas");
+        billetes.addActionListener(ev->{
+            BigDecimal valor=contarBilletes();if(valor!=null)contado.setText(Moneda.formato(valor));
+        });
+        JPanel centro=new JPanel(new BorderLayout(8,6));centro.add(efectivo,BorderLayout.NORTH);
+        centro.add(billetes,BorderLayout.CENTER);
+        if(d!=null)centro.add(form("Saldo Mercado Pago declarado",digitalContado,
+            "Fondo digital próximo turno",digitalProximo),BorderLayout.SOUTH);
+        p.add(centro,BorderLayout.CENTER);
+        p.add(form("Observaciones",observaciones),BorderLayout.SOUTH);
+        if(JOptionPane.showConfirmDialog(this,p,"Cierre y arqueo",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;
+        BigDecimal diferencia=cajas.cerrar(id,sesion.empleadoId(),contado.valor(),proximo.valor(),
+            observaciones.getText(),d==null?null:digitalContado.valor(),d==null?null:digitalProximo.valor());
+        caja.setText("");carrito.clear();refrescarCarrito();
+        mensaje("Jornada cerrada. Diferencia de efectivo: "+Moneda.formato(diferencia)+". Se cerrará tu sesión.");
         cerrarSesion();
+    }
+    private BigDecimal contarBilletes(){
+        int[] denominaciones={20000,10000,2000,1000,500,200,100,50,20,10};
+        JPanel panel=new JPanel(new GridLayout(0,2,6,6));
+        List<JSpinner> campos=new ArrayList<>();
+        for(int denominacion:denominaciones){
+            JSpinner cantidad=new JSpinner(new SpinnerNumberModel(0,0,100000,1));campos.add(cantidad);
+            panel.add(new JLabel(Moneda.formato(BigDecimal.valueOf(denominacion))));panel.add(cantidad);
+        }
+        CampoMoneda otros=new CampoMoneda();panel.add(new JLabel("Otros / monedas"));panel.add(otros);
+        if(JOptionPane.showConfirmDialog(this,new JScrollPane(panel),"Recuento de billetes",JOptionPane.OK_CANCEL_OPTION)
+            !=JOptionPane.OK_OPTION)return null;
+        BigDecimal total=otros.valor();
+        for(int i=0;i<denominaciones.length;i++)total=total.add(BigDecimal.valueOf(
+            (long)denominaciones[i]*((Number)campos.get(i).getValue()).intValue()));
+        return total;
     }
     private JTabbedPane panelPersonal(){
         JTabbedPane secciones=new JTabbedPane();
-        JPanel contenedor=new JPanel(new GridLayout(0,2,12,12));
+        JPanel contenedor=new JPanel(new GridLayout(0,3,10,10));
         contenedor.setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
         JPanel empleados=new JPanel(new BorderLayout(8,8));
         JButton alta=new JButton("Crear empleado"),recargar=new JButton("Actualizar empleados");
@@ -475,6 +540,7 @@ public final class VentanaPrincipal extends JFrame {
         contenedor.removeAll();
         for(PersonalServicio.EmpleadoFicha e:personal.listarEmpleados()) {
             JPanel ficha=new JPanel(new BorderLayout(8,8));
+            ficha.setPreferredSize(new Dimension(320,210));
             ficha.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Color.LIGHT_GRAY),
                 BorderFactory.createEmptyBorder(12,12,12,12)));
             StringBuilder horarios=new StringBuilder("<html>");
@@ -486,7 +552,8 @@ public final class VentanaPrincipal extends JFrame {
             JLabel nombre=new JLabel(e.nombre()+" · "+e.estado());
             nombre.setFont(nombre.getFont().deriveFont(Font.BOLD,15f));ficha.add(nombre,BorderLayout.NORTH);
             JPanel detalle=new JPanel(new GridLayout(0,1,3,3));
-            detalle.add(new JLabel("Login: "+e.usuario()+"   [contraseña no recuperable]"));
+            detalle.add(new JLabel("Login: "+e.usuario()));
+            detalle.add(new JLabel("Contraseña: •••••••• (protegida, restablecimiento disponible)"));
             detalle.add(new JLabel("DNI: "+e.dni()+" · Rol: "+e.rol()));
             detalle.add(new JLabel("Turnos:"));detalle.add(new JLabel(horarios.toString()));
             ficha.add(detalle,BorderLayout.CENTER);
