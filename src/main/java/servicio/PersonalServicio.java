@@ -8,7 +8,9 @@ import java.security.*;
 import java.util.*;
 
 public final class PersonalServicio {
-    public record Sesion(long empleadoId,String nombre,String rol) { public boolean administrador(){return "ADMINISTRADOR".equals(rol);} }
+    public record Sesion(long empleadoId,String nombre,String rol,boolean debeCambiarClave) {
+        public boolean administrador(){return "ADMINISTRADOR".equals(rol);}
+    }
     public static String hash(String clave) {
         if (clave==null || clave.length()<8) throw new IllegalArgumentException("La nueva contraseña debe tener al menos 8 caracteres");
         return hashInterno(clave);
@@ -53,7 +55,7 @@ public final class PersonalServicio {
                     try(PreparedStatement ps=c.prepareStatement("INSERT INTO Empleado(nombre,dni) VALUES('Administrador inicial','00000000')",Statement.RETURN_GENERATED_KEYS)) {
                         ps.executeUpdate();id=VentaServicio.idGenerado(ps);
                     }
-                    try(PreparedStatement ps=c.prepareStatement("INSERT INTO Usuario(empleado_id,nombre_usuario,contrasena_hash,rol) VALUES(?,'Admin',?,'ADMINISTRADOR')")) {
+                    try(PreparedStatement ps=c.prepareStatement("INSERT INTO Usuario(empleado_id,nombre_usuario,contrasena_hash,rol,debe_cambiar_clave) VALUES(?,'Admin',?,'ADMINISTRADOR',TRUE)")) {
                         ps.setLong(1,id);ps.setString(2,hashInterno("1234"));ps.executeUpdate();
                     }
                     c.commit();return true;
@@ -74,17 +76,83 @@ public final class PersonalServicio {
     public void cambiarCredenciales(long empleadoId,String nombreUsuario,String nuevaClave) throws SQLException {
         if(nombreUsuario==null || nombreUsuario.isBlank())throw new IllegalArgumentException("Usuario obligatorio");
         String nuevoHash=hash(nuevaClave);
-        try(Connection c=Conexion.abrir();PreparedStatement ps=c.prepareStatement("UPDATE Usuario SET nombre_usuario=?,contrasena_hash=? WHERE empleado_id=?")){
+        try(Connection c=Conexion.abrir();PreparedStatement ps=c.prepareStatement("UPDATE Usuario SET nombre_usuario=?,contrasena_hash=?,debe_cambiar_clave=FALSE WHERE empleado_id=?")){
             ps.setString(1,nombreUsuario.trim());ps.setString(2,nuevoHash);ps.setLong(3,empleadoId);
             if(ps.executeUpdate()!=1)throw new IllegalArgumentException("Cuenta inexistente");
         }
     }
+    /** Identidad de acceso actual (no recupera contraseñas). */
+    public String nombreUsuario(long empleadoId) throws SQLException {
+        try(Connection c=Conexion.abrir();PreparedStatement p=c.prepareStatement(
+                "SELECT nombre_usuario FROM Usuario WHERE empleado_id=?")) {
+            p.setLong(1,empleadoId);
+            try(ResultSet r=p.executeQuery()) {
+                if(!r.next())throw new IllegalArgumentException("Cuenta inexistente");
+                return r.getString(1);
+            }
+        }
+    }
+    /** Tras un blanqueo, compara la clave temporal y exige una clave distinta. */
+    public void cambiarClaveObligatoria(long empleadoId,String temporal,String nuevaClave) throws SQLException {
+        if(nuevaClave==null || nuevaClave.length()<8)
+            throw new IllegalArgumentException("La nueva contraseña debe tener al menos 8 caracteres");
+        try(Connection c=Conexion.abrir()) {
+            c.setAutoCommit(false);
+            try {
+                try(PreparedStatement p=c.prepareStatement(
+                    "SELECT contrasena_hash,debe_cambiar_clave FROM Usuario WHERE empleado_id=? FOR UPDATE")) {
+                    p.setLong(1,empleadoId);
+                    try(ResultSet r=p.executeQuery()) {
+                        if(!r.next() || !r.getBoolean(2) || !verificar(temporal,r.getString(1)))
+                            throw new IllegalArgumentException("La clave temporal ya no es válida");
+                        if(verificar(nuevaClave,r.getString(1)))
+                            throw new IllegalArgumentException("La nueva contraseña debe ser distinta de la temporal");
+                    }
+                }
+                try(PreparedStatement p=c.prepareStatement(
+                    "UPDATE Usuario SET contrasena_hash=?,debe_cambiar_clave=FALSE WHERE empleado_id=?")) {
+                    p.setString(1,hash(nuevaClave));p.setLong(2,empleadoId);
+                    if(p.executeUpdate()!=1)throw new IllegalArgumentException("Cuenta inexistente");
+                }
+                c.commit();
+            } catch(SQLException | RuntimeException e) {c.rollback();throw e;}
+        }
+    }
+    /** Actualiza usuario y contraseña tras verificar la clave actual. */
+    public void cambiarCredencialesSeguro(long empleadoId,String claveActual,String nuevoUsuario,
+                                           String nuevaClave) throws SQLException {
+        if(nuevoUsuario==null || nuevoUsuario.isBlank())
+            throw new IllegalArgumentException("El nombre de usuario es obligatorio");
+        if(nuevaClave==null || nuevaClave.length()<8)
+            throw new IllegalArgumentException("La nueva contraseña debe tener al menos 8 caracteres");
+        try(Connection c=Conexion.abrir()) {
+            c.setAutoCommit(false);
+            try {
+                try(PreparedStatement p=c.prepareStatement(
+                    "SELECT contrasena_hash FROM Usuario WHERE empleado_id=? FOR UPDATE")) {
+                    p.setLong(1,empleadoId);
+                    try(ResultSet r=p.executeQuery()) {
+                        if(!r.next() || !verificar(claveActual,r.getString(1)))
+                            throw new IllegalArgumentException("La contraseña actual es incorrecta");
+                        if(verificar(nuevaClave,r.getString(1)))
+                            throw new IllegalArgumentException("La contraseña nueva debe ser distinta de la actual");
+                    }
+                }
+                try(PreparedStatement p=c.prepareStatement(
+                    "UPDATE Usuario SET nombre_usuario=?,contrasena_hash=?,debe_cambiar_clave=FALSE WHERE empleado_id=?")) {
+                    p.setString(1,nuevoUsuario.trim());p.setString(2,hash(nuevaClave));p.setLong(3,empleadoId);
+                    if(p.executeUpdate()!=1)throw new IllegalArgumentException("Cuenta inexistente");
+                }
+                c.commit();
+            } catch(SQLException | RuntimeException e) {c.rollback();throw e;}
+        }
+    }
     public Sesion autenticar(String usuario,String clave)throws SQLException {
         try(Connection c=Conexion.abrir();PreparedStatement ps=c.prepareStatement(
-            "SELECT U.empleado_id,E.nombre,U.rol,U.contrasena_hash FROM Usuario U JOIN Empleado E ON E.id=U.empleado_id WHERE U.nombre_usuario=? AND E.estado='ACTIVO'")){
+            "SELECT U.empleado_id,E.nombre,U.rol,U.contrasena_hash,U.debe_cambiar_clave FROM Usuario U JOIN Empleado E ON E.id=U.empleado_id WHERE U.nombre_usuario=? AND E.estado='ACTIVO'")){
             ps.setString(1,usuario);try(ResultSet rs=ps.executeQuery()){
                 if(!rs.next() || !verificar(clave,rs.getString("contrasena_hash")))throw new IllegalArgumentException("Credenciales inválidas");
-                return new Sesion(rs.getLong("empleado_id"),rs.getString("nombre"),rs.getString("rol"));
+                return new Sesion(rs.getLong("empleado_id"),rs.getString("nombre"),rs.getString("rol"),rs.getBoolean("debe_cambiar_clave"));
             }
         }
     }
@@ -102,7 +170,7 @@ public final class PersonalServicio {
                 try(PreparedStatement ps=c.prepareStatement("INSERT INTO Empleado(nombre,dni) VALUES(?,?)",Statement.RETURN_GENERATED_KEYS)){
                     ps.setString(1,nombre.trim());ps.setString(2,dni.trim());ps.executeUpdate();id=VentaServicio.idGenerado(ps);
                 }
-                try(PreparedStatement ps=c.prepareStatement("INSERT INTO Usuario(empleado_id,nombre_usuario,contrasena_hash,rol) VALUES(?,?,?,?)")){
+                try(PreparedStatement ps=c.prepareStatement("INSERT INTO Usuario(empleado_id,nombre_usuario,contrasena_hash,rol,debe_cambiar_clave) VALUES(?,?,?,?,TRUE)")){
                     ps.setLong(1,id);ps.setString(2,usuario.trim());ps.setString(3,secreto);ps.setString(4,rol);ps.executeUpdate();
                 }
                 c.commit();return id;
@@ -128,7 +196,7 @@ public final class PersonalServicio {
         SecureRandom random=new SecureRandom();StringBuilder clave=new StringBuilder();
         for(int i=0;i<14;i++)clave.append(simbolos.charAt(random.nextInt(simbolos.length())));
         try(Connection c=Conexion.abrir();PreparedStatement ps=c.prepareStatement(
-            "UPDATE Usuario SET contrasena_hash=? WHERE empleado_id=?")){
+            "UPDATE Usuario SET contrasena_hash=?,debe_cambiar_clave=TRUE WHERE empleado_id=?")){
             ps.setString(1,hashInterno(clave.toString()));ps.setLong(2,empleadoId);
             if(ps.executeUpdate()!=1)throw new IllegalArgumentException("Cuenta inexistente");
         }

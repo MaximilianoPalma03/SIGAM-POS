@@ -78,8 +78,16 @@ public final class VentanaPrincipal extends JFrame {
             JPanel panel=form("Usuario",usuario,"Contraseña",clave);
             int opcion=JOptionPane.showConfirmDialog(this,panel,"Inicio de sesión",JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE);
             if(opcion!=JOptionPane.OK_OPTION)return false;
-            try {sesion=personal.autenticar(usuario.getText(),new String(clave.getPassword()));return true;}
-            catch(Exception e){error(e);}
+            char[] temporal=clave.getPassword();
+            try {
+                PersonalServicio.Sesion candidata=personal.autenticar(usuario.getText(),new String(temporal));
+                if(candidata.debeCambiarClave()) {
+                    if(!cambiarClaveObligatoria(candidata.empleadoId(),new String(temporal)))continue;
+                    candidata=new PersonalServicio.Sesion(candidata.empleadoId(),candidata.nombre(),candidata.rol(),false);
+                }
+                sesion=candidata;return true;
+            } catch(Exception e){error(e);}
+            finally{java.util.Arrays.fill(temporal,'\0');}
         }
     }
     private void actualizarPermisos(){
@@ -106,20 +114,53 @@ public final class VentanaPrincipal extends JFrame {
         else dispose();
     }
     private void salirDelPrograma(){if(confirmarSalir()){carrito.clear();sesion=null;dispose();}}
+    /** El formulario solo se cierra al guardar correctamente o cancelar. */
+    private boolean cambiarClaveObligatoria(long empleadoId,String temporal) {
+        JPasswordField nueva=new JPasswordField(),repetir=new JPasswordField();
+        JPanel panel=form("Nueva contraseña (8+ caracteres)",nueva,"Confirmar nueva contraseña",repetir);
+        while(true) {
+            int opcion=JOptionPane.showConfirmDialog(this,panel,
+                "Cambio obligatorio de contraseña",JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE);
+            if(opcion!=JOptionPane.OK_OPTION)return false;
+            char[] a=nueva.getPassword(),b=repetir.getPassword();
+            try {
+                if(!java.util.Arrays.equals(a,b))
+                    throw new IllegalArgumentException("Las contraseñas no coinciden");
+                personal.cambiarClaveObligatoria(empleadoId,temporal,new String(a));
+                mensaje("Contraseña actualizada. Podés utilizar el sistema.");
+                return true;
+            } catch(Exception e) {
+                error(e);nueva.setText("");repetir.setText("");
+            } finally {java.util.Arrays.fill(a,'\0');java.util.Arrays.fill(b,'\0');}
+        }
+    }
     private void editarMisCredenciales() throws SQLException {
-        JTextField usuario=new JTextField();JPasswordField clave=new JPasswordField(),repetir=new JPasswordField();
-        JPanel panel=form("Nuevo usuario/login",usuario,"Nueva contraseña (8+)",clave,"Repetir contraseña",repetir);
-        if(JOptionPane.showConfirmDialog(this,panel,"Mis credenciales",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;
-        char[] a=clave.getPassword(),b=repetir.getPassword();
-        try{
-            if(!java.util.Arrays.equals(a,b))throw new IllegalArgumentException("Las contraseñas no coinciden");
-            personal.cambiarCredenciales(sesion.empleadoId(),usuario.getText(),new String(a));
-            mensaje("Credenciales actualizadas. Se aplicarán en el próximo inicio de sesión.");
-        }finally{java.util.Arrays.fill(a,'\0');java.util.Arrays.fill(b,'\0');}
+        JTextField usuario=new JTextField(personal.nombreUsuario(sesion.empleadoId()));
+        JPasswordField actual=new JPasswordField(),clave=new JPasswordField(),repetir=new JPasswordField();
+        JPanel panel=form("Nombre de usuario",usuario,"Contraseña actual",actual,
+            "Nueva contraseña (8+)",clave,"Repetir nueva contraseña",repetir);
+        while(true) {
+            if(JOptionPane.showConfirmDialog(this,panel,"Mis credenciales",
+                JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;
+            char[] anterior=actual.getPassword(),a=clave.getPassword(),b=repetir.getPassword();
+            try {
+                if(!java.util.Arrays.equals(a,b))
+                    throw new IllegalArgumentException("Las contraseñas no coinciden");
+                personal.cambiarCredencialesSeguro(sesion.empleadoId(),new String(anterior),
+                    usuario.getText(),new String(a));
+                mensaje("Credenciales actualizadas. Se aplicarán en el próximo inicio de sesión.");
+                return;
+            } catch(Exception e) {
+                error(e);actual.setText("");clave.setText("");repetir.setText("");
+            } finally {
+                java.util.Arrays.fill(anterior,'\0');java.util.Arrays.fill(a,'\0');
+                java.util.Arrays.fill(b,'\0');
+            }
+        }
     }
     private JPanel panelVentas(){
         JPanel raiz=new JPanel(new BorderLayout(10,10));raiz.setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
-        JTextField buscar=new JTextField(24), cantidad=new JTextField("1",4);
+        JTextField buscar=new JTextField(24); JSpinner cantidad=new JSpinner(new SpinnerNumberModel(1,1,999999,1));
         JPanel superior=new JPanel(new FlowLayout(FlowLayout.LEFT,8,4));
         superior.add(new JLabel("Buscar por nombre / código:"));superior.add(buscar);
         superior.add(new JLabel("Cantidad:"));superior.add(cantidad);
@@ -166,16 +207,20 @@ public final class VentanaPrincipal extends JFrame {
         for(Producto p:productos.listar(filtro))if(p.activo() && p.stock()>0)
             tablaCatalogo.addRow(new Object[]{p.codigo(),p.nombre(),Moneda.formato(p.precioVenta()),p.stock()});
     }
-    private void agregarDeCatalogo(JTable catalogo,JTextField cantidad) throws SQLException {
+    private void agregarDeCatalogo(JTable catalogo,JSpinner cantidad) throws SQLException {
         int fila=catalogo.getSelectedRow();
         if(fila<0)throw new IllegalArgumentException("Seleccioná un producto del catálogo");
         String codigo=String.valueOf(catalogo.getValueAt(fila,0));
         Producto p=productos.buscar(codigo);
         if(p==null || !p.activo())throw new IllegalArgumentException("Producto inexistente o inactivo");
-        int q=enteroPositivo(cantidad,"Cantidad");
+        int q=((Number)cantidad.getValue()).intValue();
         int anteriores=carrito.stream().filter(l->l.producto().codigo().equals(p.codigo())).mapToInt(LineaVenta::cantidad).sum();
         if(anteriores+q>p.stock())throw new IllegalArgumentException("Stock insuficiente. Disponibles: "+p.stock());
-        carrito.add(new LineaVenta(p,q));refrescarCarrito();cantidad.setText("1");
+        int indice=-1;
+        for(int j=0;j<carrito.size();j++)if(carrito.get(j).producto().codigo().equals(p.codigo())){indice=j;break;}
+        if(indice>=0)carrito.set(indice,new LineaVenta(p,anteriores+q));
+        else carrito.add(new LineaVenta(p,q));
+        refrescarCarrito();cantidad.setValue(1);
     }
     private BigDecimal totalCarrito(){return carrito.stream().map(LineaVenta::subtotal).reduce(BigDecimal.ZERO,BigDecimal::add);}
     private void refrescarCarrito(){tablaCarrito.setRowCount(0);for(LineaVenta l:carrito)tablaCarrito.addRow(new Object[]{l.producto().codigo(),l.producto().nombre(),l.cantidad(),Moneda.formato(l.producto().precioVenta()),Moneda.formato(l.subtotal())});total.setText("TOTAL "+Moneda.formato(totalCarrito()));}
@@ -372,6 +417,10 @@ public final class VentanaPrincipal extends JFrame {
         for(JButton button:new JButton[]{nuevo,editar,asignar,quitar,ver,refrescar})acciones.add(button);
         pantallaTurnos.add(acciones,BorderLayout.NORTH);
         JTable tabla=new JTable(tablaTurnos);tabla.setRowHeight(27);tabla.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        tabla.addMouseListener(new java.awt.event.MouseAdapter(){@Override public void mouseClicked(java.awt.event.MouseEvent e){
+            if(e.getClickCount()==2 && SwingUtilities.isLeftMouseButton(e))
+                ejecutar(()->{gestionarTurno(turnoSeleccionado(tabla));cargarTurnos();cargarFichasEmpleados(contenedor);});
+        }});
         tabla.setAutoCreateRowSorter(true);pantallaTurnos.add(new JScrollPane(tabla),BorderLayout.CENTER);
         nuevo.addActionListener(e->ejecutar(()->{gestionarTurno(null);cargarTurnos();cargarFichasEmpleados(contenedor);}));
         editar.addActionListener(e->ejecutar(()->{gestionarTurno(turnoSeleccionado(tabla));cargarTurnos();cargarFichasEmpleados(contenedor);}));
