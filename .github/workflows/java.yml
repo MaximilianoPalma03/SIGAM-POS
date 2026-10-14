@@ -1,0 +1,31 @@
+name: Verificar Java SIGAM-POS
+on:
+  push:
+    branches:
+      - desarrollo/v0.5.0
+  pull_request:
+    branches:
+      - version/v0.4.0-validada
+      - main
+permissions:
+  contents: read
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Obtener codigo
+        uses: actions/checkout@v4
+      - name: Preparar Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Compilar con Maven
+        run: mvn --batch-mode --no-transfer-progress clean test
+      - name: Ejecutar pruebas del dominio
+        run: |
+          java -cp target/classes:target/test-classes ar.com.sigampos.PruebaDominio
+          java -cp target/classes:target/test-classes ar.com.sigampos.PruebaTurnos
+          java -cp target/classes:target/test-classes ar.com.sigampos.PruebaImportes
+          java -cp target/classes:target/test-classes ar.com.sigampos.PruebaAlertas
