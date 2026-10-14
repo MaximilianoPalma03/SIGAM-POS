@@ -14,6 +14,43 @@ public final class CajaDigitalServicio {
                           BigDecimal entradas,BigDecimal salidas,BigDecimal esperado,
                           String estado) {}
 
+    /** Inserción dentro de la misma transacción que abre Caja/JornadaLaboral. */
+    static void abrirEnTransaccion(Connection c,long cajaId,BigDecimal inicial) throws SQLException {
+        validar(inicial,false);
+        try(PreparedStatement p=c.prepareStatement(
+                "INSERT INTO CajaDigital(caja_id,nombre,saldo_inicial) VALUES(?,'Mercado Pago',?)")) {
+            p.setLong(1,cajaId);p.setBigDecimal(2,inicial);p.executeUpdate();
+        }
+    }
+    static void validar(BigDecimal n,boolean mayorCero) {
+        validarNoNegativo(n,"Importe");
+        if(mayorCero && n.signum()==0)throw new IllegalArgumentException("El importe debe ser mayor que cero");
+    }
+    public boolean habilitada(long cajaId) throws SQLException {
+        try(Connection c=Conexion.abrir();PreparedStatement p=c.prepareStatement(
+                "SELECT id FROM CajaDigital WHERE caja_id=?")) {
+            p.setLong(1,cajaId);try(ResultSet r=p.executeQuery()){return r.next();}
+        }
+    }
+    static void cobroEnTransaccion(Connection c,long cajaId,long empleadoId,long pagoId,
+                                   String medio,BigDecimal monto) throws SQLException {
+        new CajaDigitalServicio().registrarCobroEnVenta(c,cajaId,empleadoId,pagoId,medio,monto);
+    }
+    public String historial(long cajaId) throws SQLException {
+        StringBuilder sb=new StringBuilder("Movimientos de Mercado Pago (Caja #"+cajaId+")\n\n");
+        try(Connection c=Conexion.abrir();PreparedStatement p=c.prepareStatement(
+            "SELECT M.fecha_hora,M.tipo,M.monto,M.motivo,E.nombre FROM MovimientoCajaDigital M " +
+            "JOIN CajaDigital D ON D.id=M.caja_digital_id JOIN Empleado E ON E.id=M.empleado_id " +
+            "WHERE D.caja_id=? ORDER BY M.id")) {
+            p.setLong(1,cajaId);
+            try(ResultSet r=p.executeQuery()) {
+                while(r.next())sb.append(r.getTimestamp(1)).append(" | ").append(r.getString(2))
+                    .append(" | ").append(ar.com.sigampos.util.Moneda.formato(r.getBigDecimal(3)))
+                    .append(" | ").append(r.getString(4)).append(" | ").append(r.getString(5)).append('\n');
+            }
+        }
+        return sb.toString();
+    }
     public long abrir(long cajaId,long empleadoId,BigDecimal saldoInicial) throws SQLException {
         validarNoNegativo(saldoInicial,"Saldo inicial");
         try(Connection c=Conexion.abrir()) {
@@ -74,7 +111,10 @@ public final class CajaDigitalServicio {
     }
 
     public Resumen resumen(long cajaId) throws SQLException {
-        try(Connection c=Conexion.abrir();PreparedStatement p=c.prepareStatement(
+        try(Connection c=Conexion.abrir()) {return resumen(c,cajaId);}
+    }
+    static Resumen resumen(Connection c,long cajaId) throws SQLException {
+        try(PreparedStatement p=c.prepareStatement(
             "SELECT D.id,D.nombre,D.saldo_inicial,D.estado," +
             "COALESCE(SUM(CASE WHEN M.tipo IN ('COBRO_TRANSFERENCIA','COBRO_QR') THEN M.monto ELSE 0 END),0)," +
             "COALESCE(SUM(CASE WHEN M.tipo='ENTRADA' THEN M.monto ELSE 0 END),0)," +
@@ -83,7 +123,7 @@ public final class CajaDigitalServicio {
             "WHERE D.caja_id=? GROUP BY D.id,D.nombre,D.saldo_inicial,D.estado")) {
             p.setLong(1,cajaId);
             try(ResultSet r=p.executeQuery()) {
-                if(!r.next())throw new IllegalArgumentException("No existe caja digital vinculada a esta caja");
+                if(!r.next())return null;
                 BigDecimal inicial=r.getBigDecimal(3),cobros=r.getBigDecimal(5),
                     entradas=r.getBigDecimal(6),salidas=r.getBigDecimal(7);
                 return new Resumen(r.getLong(1),r.getString(2),inicial,cobros,entradas,
@@ -96,7 +136,7 @@ public final class CajaDigitalServicio {
      * Cierre pensado para invocarse desde la transacción de cierre de CajaServicio,
      * garantizando que caja física y digital se cierren o fallen conjuntamente.
      */
-    void cerrarEnTransaccion(Connection c,long cajaId,long empleadoId,
+    static void cerrarEnTransaccion(Connection c,long cajaId,long empleadoId,
                              BigDecimal declarado,BigDecimal proximo,String observaciones) throws SQLException {
         validarNoNegativo(declarado,"Saldo declarado");
         validarNoNegativo(proximo,"Fondo digital próximo turno");
@@ -136,7 +176,7 @@ public final class CajaDigitalServicio {
         }
     }
 
-    private long idAbierta(Connection c,long cajaId) throws SQLException {
+    private static long idAbierta(Connection c,long cajaId) throws SQLException {
         try(PreparedStatement p=c.prepareStatement(
             "SELECT id FROM CajaDigital WHERE caja_id=? AND estado='ABIERTA' FOR UPDATE")){
             p.setLong(1,cajaId);
