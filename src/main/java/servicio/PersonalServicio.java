@@ -73,14 +73,6 @@ public final class PersonalServicio {
         String pin=d.substring(d.length()-4);
         return insertarPersonal(nombre,d,d,hashInterno(pin),"VENDEDOR");
     }
-    public void cambiarCredenciales(long empleadoId,String nombreUsuario,String nuevaClave) throws SQLException {
-        if(nombreUsuario==null || nombreUsuario.isBlank())throw new IllegalArgumentException("Usuario obligatorio");
-        String nuevoHash=hash(nuevaClave);
-        try(Connection c=Conexion.abrir();PreparedStatement ps=c.prepareStatement("UPDATE Usuario SET nombre_usuario=?,contrasena_hash=?,debe_cambiar_clave=FALSE WHERE empleado_id=?")){
-            ps.setString(1,nombreUsuario.trim());ps.setString(2,nuevoHash);ps.setLong(3,empleadoId);
-            if(ps.executeUpdate()!=1)throw new IllegalArgumentException("Cuenta inexistente");
-        }
-    }
     /** Identidad de acceso actual (no recupera contraseñas). */
     public String nombreUsuario(long empleadoId) throws SQLException {
         try(Connection c=Conexion.abrir();PreparedStatement p=c.prepareStatement(

@@ -50,6 +50,9 @@ public final class VentaServicio {
                         ps.setLong(1,ventaId); ps.setString(2,pago.medio().name()); ps.setBigDecimal(3,pago.monto()); ps.executeUpdate();
                         pagoId = idGenerado(ps);
                     }
+                    if (pago.medio() == MedioPago.TRANSFERENCIA || pago.medio() == MedioPago.QR) {
+                        CajaDigitalServicio.cobroEnTransaccion(c,cajaId,empleadoId,pagoId,pago.medio().name(),pago.monto());
+                    }
                     if (pago.medio() == MedioPago.EFECTIVO) {
                         try (PreparedStatement ps = c.prepareStatement("INSERT INTO MovimientoCaja(caja_id,pago_id,empleado_id,tipo,monto,motivo) VALUES(?,?,?,'INGRESO_VENTA',?,'Cobro en efectivo')")) {
                             ps.setLong(1,cajaId); ps.setLong(2,pagoId); ps.setLong(3,empleadoId); ps.setBigDecimal(4,pago.monto()); ps.executeUpdate();
