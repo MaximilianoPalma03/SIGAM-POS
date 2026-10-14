@@ -49,6 +49,15 @@ public final class ProductoServicio {
             } catch (SQLException | RuntimeException e) { c.rollback(); throw e; }
         }
     }
+    public Producto buscar(String codigo) throws SQLException {
+        try(Connection c=Conexion.abrir()){return buscar(c,codigo,false);}
+    }
+    public void reactivar(String codigo) throws SQLException {
+        try(Connection c=Conexion.abrir();PreparedStatement ps=c.prepareStatement("UPDATE Producto SET estado='ACTIVO' WHERE codigo=? AND estado='INACTIVO'")) {
+            ps.setString(1,codigo);
+            if(ps.executeUpdate()!=1)throw new IllegalArgumentException("Producto inexistente o ya activo");
+        }
+    }
     public void desactivar(String codigo) throws SQLException {
         try (Connection c = Conexion.abrir(); PreparedStatement ps = c.prepareStatement("UPDATE Producto SET estado='INACTIVO' WHERE codigo=?")) {
             ps.setString(1, codigo); if (ps.executeUpdate() != 1) throw new SQLException("Producto inexistente");

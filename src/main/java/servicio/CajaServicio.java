@@ -72,6 +72,9 @@ public final class CajaServicio {
         }
     }
     public void registrar(long cajaId,long empleadoId,MovimientoCaja movimiento) throws SQLException {
+        if(movimiento==null)throw new IllegalArgumentException("Falta el movimiento");
+        if(movimiento.getMotivo().isBlank())throw new IllegalArgumentException("El motivo es obligatorio");
+        if(movimiento.getMotivo().length()>255)throw new IllegalArgumentException("Motivo demasiado largo");
         if(movimiento instanceof IngresoCaja ingreso && ingreso.tipo().equals("INGRESO_VENTA"))
             throw new IllegalArgumentException("El efectivo por venta solo puede registrarlo VentaServicio");
         try(Connection c=Conexion.abrir()) {
@@ -85,6 +88,21 @@ public final class CajaServicio {
                 c.commit();
             }catch(SQLException | RuntimeException e){c.rollback();throw e;}
         }
+    }
+    /** Historial de caja ordenado para verificar operaciones y corregir errores de carga. */
+    public String historial(long cajaId) throws SQLException {
+        String sql="SELECT M.fecha_hora,M.tipo,M.monto,M.motivo,E.nombre FROM MovimientoCaja M " +
+            "JOIN Empleado E ON E.id=M.empleado_id WHERE M.caja_id=? ORDER BY M.id";
+        StringBuilder sb=new StringBuilder("Movimientos de caja #"+cajaId+"\n\n");
+        try(Connection c=Conexion.abrir();PreparedStatement ps=c.prepareStatement(sql)) {
+            ps.setLong(1,cajaId);
+            try(ResultSet r=ps.executeQuery()){
+                while(r.next())sb.append(r.getTimestamp(1)).append(" | ").append(r.getString(2)).append(" | ")
+                    .append(ar.com.sigampos.util.Moneda.formato(r.getBigDecimal(3))).append(" | ")
+                    .append(r.getString(4)).append(" | ").append(r.getString(5)).append('\n');
+            }
+        }
+        return sb.toString();
     }
     public Resumen resumen(long cajaId) throws SQLException {
         try(Connection c=Conexion.abrir()) {return resumen(c,cajaId);}

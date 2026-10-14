@@ -109,9 +109,61 @@ public final class PersonalServicio {
             }catch(SQLException | RuntimeException e){c.rollback();throw e;}
         }
     }
-    public void desactivar(long empleadoId)throws SQLException {
-        try(Connection c=Conexion.abrir();PreparedStatement ps=c.prepareStatement("UPDATE Empleado SET estado='INACTIVO' WHERE id=?")){
-            ps.setLong(1,empleadoId);if(ps.executeUpdate()!=1)throw new IllegalArgumentException("Empleado inexistente");
+    public record EmpleadoFicha(long id,String nombre,String dni,String usuario,String rol,String estado) {
+        public boolean activo(){return "ACTIVO".equals(estado);}
+    }
+    public List<EmpleadoFicha> listarEmpleados() throws SQLException {
+        List<EmpleadoFicha> empleados=new ArrayList<>();
+        String sql="SELECT E.id,E.nombre,E.dni,U.nombre_usuario,U.rol,E.estado FROM Empleado E " +
+            "JOIN Usuario U ON U.empleado_id=E.id ORDER BY E.estado,E.nombre,E.id";
+        try(Connection c=Conexion.abrir();PreparedStatement ps=c.prepareStatement(sql);ResultSet rs=ps.executeQuery()) {
+            while(rs.next())empleados.add(new EmpleadoFicha(rs.getLong(1),rs.getString(2),rs.getString(3),
+                rs.getString(4),rs.getString(5),rs.getString(6)));
+        }
+        return empleados;
+    }
+    /** Genera una clave aleatoria que se muestra una única vez; nunca se revela la contraseña previa. */
+    public String restablecerClave(long empleadoId) throws SQLException {
+        final String simbolos="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+        SecureRandom random=new SecureRandom();StringBuilder clave=new StringBuilder();
+        for(int i=0;i<14;i++)clave.append(simbolos.charAt(random.nextInt(simbolos.length())));
+        try(Connection c=Conexion.abrir();PreparedStatement ps=c.prepareStatement(
+            "UPDATE Usuario SET contrasena_hash=? WHERE empleado_id=?")){
+            ps.setString(1,hashInterno(clave.toString()));ps.setLong(2,empleadoId);
+            if(ps.executeUpdate()!=1)throw new IllegalArgumentException("Cuenta inexistente");
+        }
+        return clave.toString();
+    }
+    public void reactivar(long empleadoId) throws SQLException {
+        try(Connection c=Conexion.abrir();PreparedStatement ps=c.prepareStatement("UPDATE Empleado SET estado='ACTIVO' WHERE id=? AND estado='INACTIVO'")) {
+            ps.setLong(1,empleadoId);
+            if(ps.executeUpdate()!=1)throw new IllegalArgumentException("Empleado inexistente o activo");
         }
     }
+    public void desactivar(long empleadoId)throws SQLException {
+        try(Connection c=Conexion.abrir()){
+            c.setAutoCommit(false);
+            try {
+                try(PreparedStatement ps=c.prepareStatement("SELECT id FROM Empleado WHERE id=? AND estado='ACTIVO' FOR UPDATE")){
+                    ps.setLong(1,empleadoId);
+                    try(ResultSet rs=ps.executeQuery()){
+                        if(!rs.next())throw new IllegalArgumentException("Empleado inexistente o ya inactivo");
+                    }
+                }
+                try(PreparedStatement ps=c.prepareStatement(
+                        "SELECT id FROM JornadaLaboral WHERE empleado_id=? AND estado='ABIERTA' LIMIT 1")){
+                    ps.setLong(1,empleadoId);
+                    try(ResultSet rs=ps.executeQuery()){
+                        if(rs.next())throw new IllegalStateException("El empleado tiene una jornada abierta. Debe finalizar y cerrar caja antes de desactivarlo.");
+                    }
+                }
+                try(PreparedStatement ps=c.prepareStatement("UPDATE Empleado SET estado='INACTIVO' WHERE id=?")){
+                    ps.setLong(1,empleadoId);
+                    if(ps.executeUpdate()!=1)throw new SQLException("No se pudo desactivar el empleado");
+                }
+                c.commit();
+            }catch(SQLException | RuntimeException e){c.rollback();throw e;}
+        }
+    }
+
 }

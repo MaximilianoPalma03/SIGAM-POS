@@ -1,4 +1,4 @@
-# Maven y Java
+﻿# Maven y Java
 target/
 *.class
 
@@ -7,12 +7,13 @@ target/
 *.iml
 .vscode/
 .settings/
+.project
+.classpath
 
-# Datos privados y locales
+# Configuraciones privadas
 .env
 .env.*
 *.log
-*.sql.bak
 
 # Sistema operativo
 Thumbs.db
