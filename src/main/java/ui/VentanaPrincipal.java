@@ -673,15 +673,28 @@ public final class VentanaPrincipal extends JFrame {
         }));
         return panel;
     }
+    private record EmpleadoOpcion(Long id,String descripcion) {
+        @Override public String toString(){return descripcion;}
+    }
+    private void cargarFiltroEmpleados(JComboBox<EmpleadoOpcion> filtro) throws SQLException {
+        filtro.removeAllItems();
+        filtro.addItem(new EmpleadoOpcion(null,"TODOS"));
+        for(var e:personal.listarEmpleados())filtro.addItem(
+            new EmpleadoOpcion(e.id(),e.nombre()+" · DNI "+e.dni()));
+    }
     private JPanel panelHistorialVentas(){
         JPanel raiz=new JPanel(new BorderLayout(8,8));raiz.setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
         JTextField desde=new JTextField(LocalDate.now().minusDays(30).toString(),10),
             hasta=new JTextField(LocalDate.now().toString(),10);
         JComboBox<String> medio=new JComboBox<>(new String[]{"TODOS","EFECTIVO","TRANSFERENCIA","TARJETA","QR"});
+        JComboBox<EmpleadoOpcion> vendedor=new JComboBox<>();
+        vendedor.addItem(new EmpleadoOpcion(null,"TODOS"));
+        JButton recargarVendedores=new JButton("Cargar vendedores");
+        recargarVendedores.addActionListener(e->ejecutar(()->cargarFiltroEmpleados(vendedor)));
         JButton buscar=new JButton("Consultar"),detalle=new JButton("Ver detalle y pagos");
         JPanel filtros=new JPanel(new FlowLayout(FlowLayout.LEFT));
         for(Component a:new Component[]{new JLabel("Desde (AAAA-MM-DD)"),desde,
-            new JLabel("Hasta"),hasta,new JLabel("Medio"),medio,buscar,detalle})filtros.add(a);
+            new JLabel("Hasta"),hasta,new JLabel("Medio"),medio,new JLabel("Empleado"),vendedor,recargarVendedores,buscar,detalle})filtros.add(a);
         raiz.add(filtros,BorderLayout.NORTH);
         DefaultTableModel m=new DefaultTableModel(new Object[]{"Venta","Caja","Empleado","Fecha","Total"},0){
             @Override public boolean isCellEditable(int f,int c){return false;}
@@ -692,7 +705,7 @@ public final class VentanaPrincipal extends JFrame {
             m.setRowCount(0);
             String elegido=String.valueOf(medio.getSelectedItem());
             for(var v:historiales.listar(LocalDate.parse(desde.getText()),LocalDate.parse(hasta.getText()),
-                  null,"TODOS".equals(elegido)?null:elegido))
+                  ((EmpleadoOpcion)vendedor.getSelectedItem()).id(),"TODOS".equals(elegido)?null:elegido))
                 m.addRow(new Object[]{v.id(),v.cajaId(),v.empleado(),v.fechaHora(),Moneda.formato(v.total())});
         }));
         Runnable ver=()->ejecutar(()->{
@@ -720,9 +733,13 @@ public final class VentanaPrincipal extends JFrame {
         JTextField desde=new JTextField(LocalDate.now().minusDays(30).toString(),10),
             hasta=new JTextField(LocalDate.now().toString(),10);
         JComboBox<String> estado=new JComboBox<>(new String[]{"TODOS","ABIERTA","CERRADA"});
+        JComboBox<EmpleadoOpcion> cajero=new JComboBox<>();
+        cajero.addItem(new EmpleadoOpcion(null,"TODOS"));
+        JButton recargarCajeros=new JButton("Cargar cajeros");
+        recargarCajeros.addActionListener(e->ejecutar(()->cargarFiltroEmpleados(cajero)));
         JButton buscar=new JButton("Consultar"),detalle=new JButton("Ver detalle");
         JPanel filtros=new JPanel(new FlowLayout(FlowLayout.LEFT));
-        for(Component a:new Component[]{new JLabel("Desde"),desde,new JLabel("Hasta"),hasta,new JLabel("Estado"),estado,buscar,detalle})filtros.add(a);
+        for(Component a:new Component[]{new JLabel("Desde"),desde,new JLabel("Hasta"),hasta,new JLabel("Estado"),estado,new JLabel("Cajero"),cajero,recargarCajeros,buscar,detalle})filtros.add(a);
         raiz.add(filtros,BorderLayout.NORTH);
         DefaultTableModel m=new DefaultTableModel(new Object[]{"Caja","Empleado","Turno","Apertura","Cierre","Estado","Fondo inicial","Efectivo","MP cobrado","Diferencia"},0){
             @Override public boolean isCellEditable(int f,int c){return false;}
@@ -733,7 +750,7 @@ public final class VentanaPrincipal extends JFrame {
             m.setRowCount(0);
             String filtro=String.valueOf(estado.getSelectedItem());
             for(var j:jornadas.listar(LocalDate.parse(desde.getText()),LocalDate.parse(hasta.getText()),
-                null,"TODOS".equals(filtro)?null:filtro))
+                ((EmpleadoOpcion)cajero.getSelectedItem()).id(),"TODOS".equals(filtro)?null:filtro))
                 m.addRow(new Object[]{j.cajaId(),j.empleado(),j.turno(),j.inicio(),j.fin(),j.estado(),
                     Moneda.formato(j.fondo()),Moneda.formato(j.efectivo()),Moneda.formato(j.digital()),Moneda.formato(j.diferencia())});
         }));
