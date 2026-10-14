@@ -646,12 +646,147 @@ public final class VentanaPrincipal extends JFrame {
         if(anterior==null) {long id=turnos.crear(nombre.getText(),i,f,seleccionados);mensaje("Turno #"+id+" creado. Ahora podés asignarlo a los empleados.");}
         else {turnos.modificar(anterior.id(),nombre.getText(),i,f,seleccionados);mensaje("Turno actualizado; las jornadas históricas conservan los horarios originales.");}
     }
-    private JPanel panelAnalisis(){
-        JPanel panel=new JPanel(new FlowLayout(FlowLayout.LEFT,15,15));JTextField desde=new JTextField(LocalDate.now().minusDays(30).toString(),12),hasta=new JTextField(LocalDate.now().toString(),12);
-        JButton consultar=new JButton("Consultar ventas por período");JTextArea area=new JTextArea(8,65);area.setEditable(false);
-        panel.add(new JLabel("Desde"));panel.add(desde);panel.add(new JLabel("Hasta"));panel.add(hasta);panel.add(consultar);panel.add(new JScrollPane(area));
-        consultar.addActionListener(e->ejecutar(()->{var r=analisis.resumen(LocalDate.parse(desde.getText()),LocalDate.parse(hasta.getText()));area.setText("Cantidad de ventas: "+r.cantidadVentas()+"\nFacturación: $ "+r.montoTotal()+"\nTicket promedio: $ "+r.promedio());}));
+    private JTabbedPane panelAnalisis(){
+        JTabbedPane tabs=new JTabbedPane();
+        tabs.addTab("Resumen",panelResumen());
+        tabs.addTab("Historial de ventas",panelHistorialVentas());
+        tabs.addTab("Historial de jornadas",panelHistorialJornadas());
+        return tabs;
+    }
+    private JPanel panelResumen(){
+        JPanel panel=new JPanel(new FlowLayout(FlowLayout.LEFT,15,15));
+        JTextField desde=new JTextField(LocalDate.now().minusDays(30).toString(),12),
+            hasta=new JTextField(LocalDate.now().toString(),12);
+        JButton consultar=new JButton("Consultar ventas por período");
+        JTextArea area=new JTextArea(12,65);area.setEditable(false);
+        panel.add(new JLabel("Desde"));panel.add(desde);panel.add(new JLabel("Hasta"));panel.add(hasta);
+        panel.add(consultar);panel.add(new JScrollPane(area));
+        consultar.addActionListener(e->ejecutar(()->{
+            LocalDate a=LocalDate.parse(desde.getText()),b=LocalDate.parse(hasta.getText());
+            var r=analisis.resumen(a,b);
+            StringBuilder sb=new StringBuilder("Cantidad de ventas: "+r.cantidadVentas()+
+                "\nFacturación: "+Moneda.formato(r.montoTotal())+
+                "\nTicket promedio: "+Moneda.formato(r.promedio())+"\n\nPagos por medio:\n");
+            for(var pago:historiales.recaudacion(a,b))sb.append(pago.medio()).append(": ")
+                .append(Moneda.formato(pago.importe())).append(" (pagos: ").append(pago.pagos()).append(")\n");
+            area.setText(sb.toString());
+        }));
         return panel;
+    }
+    private JPanel panelHistorialVentas(){
+        JPanel raiz=new JPanel(new BorderLayout(8,8));raiz.setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
+        JTextField desde=new JTextField(LocalDate.now().minusDays(30).toString(),10),
+            hasta=new JTextField(LocalDate.now().toString(),10);
+        JComboBox<String> medio=new JComboBox<>(new String[]{"TODOS","EFECTIVO","TRANSFERENCIA","TARJETA","QR"});
+        JButton buscar=new JButton("Consultar"),detalle=new JButton("Ver detalle y pagos");
+        JPanel filtros=new JPanel(new FlowLayout(FlowLayout.LEFT));
+        for(Component a:new Component[]{new JLabel("Desde (AAAA-MM-DD)"),desde,
+            new JLabel("Hasta"),hasta,new JLabel("Medio"),medio,buscar,detalle})filtros.add(a);
+        raiz.add(filtros,BorderLayout.NORTH);
+        DefaultTableModel m=new DefaultTableModel(new Object[]{"Venta","Caja","Empleado","Fecha","Total"},0){
+            @Override public boolean isCellEditable(int f,int c){return false;}
+        };
+        JTable tabla=new JTable(m);tabla.setAutoCreateRowSorter(true);
+        raiz.add(new JScrollPane(tabla),BorderLayout.CENTER);
+        buscar.addActionListener(e->ejecutar(()->{
+            m.setRowCount(0);
+            String elegido=String.valueOf(medio.getSelectedItem());
+            for(var v:historiales.listar(LocalDate.parse(desde.getText()),LocalDate.parse(hasta.getText()),
+                  null,"TODOS".equals(elegido)?null:elegido))
+                m.addRow(new Object[]{v.id(),v.cajaId(),v.empleado(),v.fechaHora(),Moneda.formato(v.total())});
+        }));
+        Runnable ver=()->ejecutar(()->{
+            int f=tabla.getSelectedRow();if(f<0)throw new IllegalArgumentException("Seleccioná una venta");
+            long id=((Number)m.getValueAt(tabla.convertRowIndexToModel(f),0)).longValue();
+            HistorialVentasServicio.Detalle d=historiales.detalle(id);
+            StringBuilder sb=new StringBuilder("VENTA #"+id+"\n\nARTÍCULOS\n");
+            for(var item:d.productos())sb.append(item.codigo()).append(" × ").append(item.cantidad())
+                .append(" · Unitario ").append(Moneda.formato(item.unitario()))
+                .append(" · Subtotal ").append(Moneda.formato(item.subtotal())).append('\n');
+            sb.append("\nMEDIOS DE PAGO\n");
+            for(var pago:d.pagos())sb.append(pago.medio()).append(" · ")
+                .append(Moneda.formato(pago.monto())).append('\n');
+            JTextArea texto=new JTextArea(sb.toString(),16,52);texto.setEditable(false);
+            JOptionPane.showMessageDialog(this,new JScrollPane(texto),"Venta #"+id,JOptionPane.INFORMATION_MESSAGE);
+        });
+        detalle.addActionListener(e->ver.run());
+        tabla.addMouseListener(new java.awt.event.MouseAdapter(){@Override public void mouseClicked(java.awt.event.MouseEvent e){
+            if(e.getClickCount()==2)ver.run();
+        }});
+        return raiz;
+    }
+    private JPanel panelHistorialJornadas(){
+        JPanel raiz=new JPanel(new BorderLayout(8,8));raiz.setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
+        JTextField desde=new JTextField(LocalDate.now().minusDays(30).toString(),10),
+            hasta=new JTextField(LocalDate.now().toString(),10);
+        JComboBox<String> estado=new JComboBox<>(new String[]{"TODOS","ABIERTA","CERRADA"});
+        JButton buscar=new JButton("Consultar"),detalle=new JButton("Ver detalle");
+        JPanel filtros=new JPanel(new FlowLayout(FlowLayout.LEFT));
+        for(Component a:new Component[]{new JLabel("Desde"),desde,new JLabel("Hasta"),hasta,new JLabel("Estado"),estado,buscar,detalle})filtros.add(a);
+        raiz.add(filtros,BorderLayout.NORTH);
+        DefaultTableModel m=new DefaultTableModel(new Object[]{"Caja","Empleado","Turno","Apertura","Cierre","Estado","Fondo inicial","Efectivo","Digital","Diferencia"},0){
+            @Override public boolean isCellEditable(int f,int c){return false;}
+        };
+        JTable tabla=new JTable(m);tabla.setAutoCreateRowSorter(true);
+        raiz.add(new JScrollPane(tabla),BorderLayout.CENTER);
+        buscar.addActionListener(e->ejecutar(()->{
+            m.setRowCount(0);
+            String filtro=String.valueOf(estado.getSelectedItem());
+            for(var j:jornadas.listar(LocalDate.parse(desde.getText()),LocalDate.parse(hasta.getText()),
+                null,"TODOS".equals(filtro)?null:filtro))
+                m.addRow(new Object[]{j.cajaId(),j.empleado(),j.turno(),j.inicio(),j.fin(),j.estado(),
+                    Moneda.formato(j.fondo()),Moneda.formato(j.efectivo()),Moneda.formato(j.digital()),Moneda.formato(j.diferencia())});
+        }));
+        detalle.addActionListener(e->ejecutar(()->{
+            int f=tabla.getSelectedRow();if(f<0)throw new IllegalArgumentException("Seleccioná una jornada");
+            long id=((Number)m.getValueAt(tabla.convertRowIndexToModel(f),0)).longValue();
+            CajaServicio.Resumen r=cajas.resumen(id);
+            CajaDigitalServicio.Resumen d=digital.resumen(id);
+            JTextArea t=new JTextArea(desglose(r)+"\n\n"+desgloseDigital(d)+"\n\n"+cajas.historial(id)+
+                (d==null?"":"\n"+digital.historial(id)),22,65);
+            t.setEditable(false);JOptionPane.showMessageDialog(this,new JScrollPane(t),"Jornada caja #"+id,
+                JOptionPane.INFORMATION_MESSAGE);
+        }));
+        return raiz;
+    }
+    private void actualizarAlertas() throws SQLException {
+        if(sesion!=null)botonAlertas.setText("Avisos de stock ("+alertas.pendientes(sesion.empleadoId()).size()+")");
+    }
+    private void abrirAlertas() throws SQLException {
+        List<AlertasServicio.Alerta> pendientes=alertas.pendientes(sesion.empleadoId());
+        if(pendientes.isEmpty()){mensaje("No hay alertas de stock pendientes");return;}
+        JPanel listado=new JPanel(new GridLayout(0,1,6,6));
+        JDialog dialogo=new JDialog(this,"Notificaciones de stock",false);
+        for(var alerta:pendientes){
+            JPanel fila=new JPanel(new BorderLayout(10,2));
+            fila.setBorder(BorderFactory.createEmptyBorder(8,8,8,8));
+            if("SIN_STOCK".equals(alerta.nivel()))fila.setBackground(new Color(255,178,178));
+            else if("BAJO".equals(alerta.nivel()))fila.setBackground(new Color(255,209,143));
+            else fila.setBackground(new Color(235,240,247));
+            JLabel info=new JLabel(alerta.nombre()+" · "+alerta.codigo()+" · Stock: "+alerta.stock()+
+                " ["+alerta.nivel()+"]");
+            JButton ver=new JButton("Ver producto"),cerrar=new JButton("X");
+            JPanel acciones=new JPanel(new FlowLayout(FlowLayout.RIGHT));acciones.setOpaque(false);
+            acciones.add(ver);acciones.add(cerrar);fila.add(info,BorderLayout.CENTER);fila.add(acciones,BorderLayout.EAST);
+            ver.addActionListener(ev->ejecutar(()->{dialogo.dispose();seleccionarProducto(alerta.codigo());}));
+            cerrar.addActionListener(ev->ejecutar(()->{
+                alertas.descartar(sesion.empleadoId(),alerta);listado.remove(fila);
+                listado.revalidate();listado.repaint();actualizarAlertas();
+            }));
+            listado.add(fila);
+        }
+        dialogo.add(new JScrollPane(listado));dialogo.setSize(740,Math.min(560,200+pendientes.size()*75));
+        dialogo.setLocationRelativeTo(this);dialogo.setVisible(true);
+    }
+    private void seleccionarProducto(String codigo) throws SQLException {
+        filtroProductos.setText(codigo);cargarProductos(codigo);pestañas.setSelectedIndex(1);
+        for(int i=0;i<tablaProductos.getRowCount();i++){
+            if(codigo.equals(String.valueOf(tablaProductos.getValueAt(i,0)))){
+                int v=vistaProductos.convertRowIndexToView(i);
+                vistaProductos.setRowSelectionInterval(v,v);
+                vistaProductos.scrollRectToVisible(vistaProductos.getCellRect(v,0,true));break;
+            }
+        }
     }
     private static JPanel form(Object... campos){JPanel p=new JPanel(new GridLayout(campos.length/2,2,8,8));for(Object o:campos){if(o instanceof Component c)p.add(c);else p.add(new JLabel(o.toString()));}return p;}
     private static Integer enteroOpcional(JTextField t){return t.getText().isBlank()?null:Integer.parseInt(t.getText().trim());}
