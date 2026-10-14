@@ -724,7 +724,7 @@ public final class VentanaPrincipal extends JFrame {
         JPanel filtros=new JPanel(new FlowLayout(FlowLayout.LEFT));
         for(Component a:new Component[]{new JLabel("Desde"),desde,new JLabel("Hasta"),hasta,new JLabel("Estado"),estado,buscar,detalle})filtros.add(a);
         raiz.add(filtros,BorderLayout.NORTH);
-        DefaultTableModel m=new DefaultTableModel(new Object[]{"Caja","Empleado","Turno","Apertura","Cierre","Estado","Fondo inicial","Efectivo","Digital","Diferencia"},0){
+        DefaultTableModel m=new DefaultTableModel(new Object[]{"Caja","Empleado","Turno","Apertura","Cierre","Estado","Fondo inicial","Efectivo","MP cobrado","Diferencia"},0){
             @Override public boolean isCellEditable(int f,int c){return false;}
         };
         JTable tabla=new JTable(m);tabla.setAutoCreateRowSorter(true);

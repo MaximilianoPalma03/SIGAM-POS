@@ -13,8 +13,9 @@ public final class JornadasServicio {
         if(desde==null || hasta==null || desde.isAfter(hasta))throw new IllegalArgumentException("Fechas inválidas");
         String sql="SELECT C.id,E.nombre,T.nombre,J.inicio_real,J.fin_real,C.estado,C.fondo_inicial,"+
             "COALESCE((SELECT SUM(M.monto) FROM MovimientoCaja M WHERE M.caja_id=C.id AND M.tipo='INGRESO_VENTA'),0),"+
-            "COALESCE((SELECT SUM(P.monto) FROM Pago P JOIN Venta V ON V.id=P.venta_id " +
-            "WHERE V.caja_id=C.id AND P.medio_pago<>'EFECTIVO'),0),"+
+            "COALESCE((SELECT SUM(MD.monto) FROM CajaDigital D JOIN MovimientoCajaDigital MD " +
+            "ON MD.caja_digital_id=D.id WHERE D.caja_id=C.id " +
+            "AND MD.tipo IN ('COBRO_TRANSFERENCIA','COBRO_QR')),0),"+
             "COALESCE((SELECT SUM(M.monto) FROM MovimientoCaja M WHERE M.caja_id=C.id AND M.tipo='ENTRADA'),0),"+
             "COALESCE((SELECT SUM(M.monto) FROM MovimientoCaja M WHERE M.caja_id=C.id AND M.tipo='SALIDA'),0),"+
             "A.diferencia FROM Caja C JOIN JornadaLaboral J ON J.id=C.jornada_id " +
