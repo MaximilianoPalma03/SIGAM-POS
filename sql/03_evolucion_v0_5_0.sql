@@ -55,3 +55,14 @@ CREATE TABLE IF NOT EXISTS ArqueoCajaDigital (
 -- Los pagos de ventas históricas siguen estando en Pago y se reflejan
 -- en informes. No se vuelcan automáticamente a CajaDigital: no sabemos
 -- qué billetera recibió cada transferencia ni qué saldo tenía al abrir.
+
+-- Avisos de stock por empleado, con descarte hasta cambio de situación.
+CREATE TABLE NotificacionStockDescartada (
+ empleado_id BIGINT NOT NULL,
+ producto_codigo VARCHAR(50) NOT NULL,
+ stock_registrado INT NOT NULL,
+ tipo VARCHAR(20) NOT NULL,
+ PRIMARY KEY (empleado_id,producto_codigo),
+ FOREIGN KEY (empleado_id) REFERENCES Empleado(id),
+ FOREIGN KEY (producto_codigo) REFERENCES Producto(codigo)
+) ENGINE=InnoDB;
