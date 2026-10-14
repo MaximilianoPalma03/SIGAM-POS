@@ -7,6 +7,7 @@ import javax.swing.table.DefaultTableModel;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import ar.com.sigampos.util.Moneda;
+import ar.com.sigampos.util.CampoMoneda;
 import java.awt.*;
 import java.math.BigDecimal;
 import java.sql.SQLException;
@@ -22,6 +23,14 @@ public final class VentanaPrincipal extends JFrame {
     private final PersonalServicio personal=new PersonalServicio();
     private final TurnoServicio turnos=new TurnoServicio();
     private final AnalisisServicio analisis=new AnalisisServicio();
+    private final HistorialVentasServicio historiales=new HistorialVentasServicio();
+    private final JornadasServicio jornadas=new JornadasServicio();
+    private final AlertasServicio alertas=new AlertasServicio();
+    private final CajaDigitalServicio digital=new CajaDigitalServicio();
+    private final JButton botonAlertas=new JButton("Avisos de stock");
+    private JTable vistaProductos;
+    private JTextField filtroProductos;
+    private final List<JButton> accionesProductos=new ArrayList<>();
     private PersonalServicio.Sesion sesion;
     private final List<LineaVenta> carrito=new ArrayList<>();
     private final DefaultTableModel tablaCarrito=new DefaultTableModel(new Object[]{"Código","Producto","Cantidad","Unitario","Subtotal"},0) {
@@ -63,12 +72,16 @@ public final class VentanaPrincipal extends JFrame {
         pestañas.addTab("Ventas",panelVentas());pestañas.addTab("Productos",panelProductos());
         pestañas.addTab("Caja",panelCaja());pestañas.addTab("Personal / Turnos",panelPersonal());pestañas.addTab("Análisis",panelAnalisis());
         add(pestañas,BorderLayout.CENTER);
+        pestañas.addChangeListener(e->{
+            if(sesion!=null && pestañas.getSelectedIndex()==0)
+                ejecutar(()->cargarCatalogo(""));
+        });
         SwingUtilities.invokeLater(()->{
             try {
                 if(personal.crearAdminInicialSiFalta()) mensaje("Primera instalación: usuario Admin y contraseña temporal 1234. Cambiala desde Mis credenciales.");
                 if(!iniciarSesion()) {dispose();return;}
                 actualizarPermisos();
-                cargarProductos("");cargarCatalogo("");
+                cargarProductos("");cargarCatalogo("");actualizarAlertas();
             } catch(Exception e) {error(e);dispose();}
         });
     }
@@ -92,7 +105,8 @@ public final class VentanaPrincipal extends JFrame {
     }
     private void actualizarPermisos(){
         sesionLabel.setText(sesion.nombre()+"  |  "+sesion.rol()+"  ");
-        pestañas.setEnabledAt(1,sesion.administrador());
+        pestañas.setEnabledAt(1,true); // Los vendedores consultan el stock en solo lectura.
+        for(JButton b:accionesProductos)b.setEnabled(sesion.administrador());
         pestañas.setEnabledAt(3,sesion.administrador());
         pestañas.setEnabledAt(4,sesion.administrador());
         pestañas.setSelectedIndex(0);
@@ -165,7 +179,9 @@ public final class VentanaPrincipal extends JFrame {
         superior.add(new JLabel("Buscar por nombre / código:"));superior.add(buscar);
         superior.add(new JLabel("Cantidad:"));superior.add(cantidad);
         JButton agregar=new JButton("Agregar seleccionado"),quitar=new JButton("Quitar del carrito");
-        superior.add(agregar);superior.add(quitar);raiz.add(superior,BorderLayout.NORTH);
+        superior.add(agregar);superior.add(quitar);superior.add(botonAlertas);
+        botonAlertas.addActionListener(e->ejecutar(()->abrirAlertas()));
+        raiz.add(superior,BorderLayout.NORTH);
 
         JTable catalogo=new JTable(tablaCatalogo);catalogo.setRowHeight(25);
         catalogo.setAutoCreateRowSorter(true);catalogo.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -206,6 +222,7 @@ public final class VentanaPrincipal extends JFrame {
         tablaCatalogo.setRowCount(0);
         for(Producto p:productos.listar(filtro))if(p.activo() && p.stock()>0)
             tablaCatalogo.addRow(new Object[]{p.codigo(),p.nombre(),Moneda.formato(p.precioVenta()),p.stock()});
+        if(sesion!=null)actualizarAlertas();
     }
     private void agregarDeCatalogo(JTable catalogo,JSpinner cantidad) throws SQLException {
         int fila=catalogo.getSelectedRow();
@@ -229,28 +246,36 @@ public final class VentanaPrincipal extends JFrame {
         long cajaId=cajaActual(); // Validar ANTES del diálogo de cobro (INT-03).
         JPanel panel=new JPanel(new GridLayout(5,2,8,8));
         panel.add(new JLabel("TOTAL:"));panel.add(new JLabel(Moneda.formato(totalCarrito())));
-        Map<MedioPago,JTextField> importes=new LinkedHashMap<>();
-        for(MedioPago medio:MedioPago.values()){JTextField tf=new JTextField("0");importes.put(medio,tf);panel.add(new JLabel(medio.name()));panel.add(tf);}
+        Map<MedioPago,CampoMoneda> importes=new LinkedHashMap<>();
+        for(MedioPago medio:MedioPago.values()){
+            CampoMoneda tf=new CampoMoneda();importes.put(medio,tf);
+            panel.add(new JLabel(medio.name()));panel.add(tf);
+        }
         if(JOptionPane.showConfirmDialog(this,panel,"Finalizar venta - pagos divididos",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;
         List<PagoVenta> pagos=new ArrayList<>();
         for(var entry:importes.entrySet()){BigDecimal m=importe(entry.getValue());if(m.signum()>0)pagos.add(new PagoVenta(entry.getKey(),m));}
+        if(pagos.stream().anyMatch(x->x.medio()==MedioPago.TRANSFERENCIA||x.medio()==MedioPago.QR)
+            && !digital.habilitada(cajaId))
+            throw new IllegalArgumentException("Para cobrar con transferencia o QR debés abrir Mercado Pago en Caja al iniciar la jornada.");
         long id=ventas.confirmar(cajaId,sesion.empleadoId(),List.copyOf(carrito),pagos);
         carrito.clear();refrescarCarrito();cargarProductos("");cargarCatalogo("");mensaje("Venta #"+id+" registrada y stock actualizado");
     }
     private JPanel panelProductos(){
         JPanel raiz=new JPanel(new BorderLayout(8,8));raiz.setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
-        JTextField filtro=new JTextField(22);JPanel arriba=new JPanel(new FlowLayout(FlowLayout.LEFT));
+        JTextField filtro=new JTextField(22);filtroProductos=filtro;
+        JPanel arriba=new JPanel(new FlowLayout(FlowLayout.LEFT));
         arriba.add(new JLabel("Buscar nombre o código:"));arriba.add(filtro);
         JButton nuevo=new JButton("Crear producto"),editar=new JButton("Editar seleccionado"),baja=new JButton("Desactivar"),activar=new JButton("Reactivar");
-        for(JButton b:new JButton[]{nuevo,editar,baja,activar})arriba.add(b);
+        for(JButton b:new JButton[]{nuevo,editar,baja,activar}){arriba.add(b);accionesProductos.add(b);}
         raiz.add(arriba,BorderLayout.NORTH);
-        JTable tabla=new JTable(tablaProductos);tabla.setRowHeight(27);tabla.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        JTable tabla=new JTable(tablaProductos);vistaProductos=tabla;tabla.setRowHeight(27);tabla.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         tabla.setAutoCreateRowSorter(true);raiz.add(new JScrollPane(tabla),BorderLayout.CENTER);
         alCambiar(filtro,()->ejecutar(()->cargarProductos(filtro.getText())));
         nuevo.addActionListener(e->ejecutar(()->editarProducto(null,filtro.getText())));
         editar.addActionListener(e->ejecutar(()->editarProducto(productoSeleccionado(tabla),filtro.getText())));
         tabla.addMouseListener(new java.awt.event.MouseAdapter(){@Override public void mouseClicked(java.awt.event.MouseEvent e){
-            if(e.getClickCount()==2)ejecutar(()->editarProducto(productoSeleccionado(tabla),filtro.getText()));
+            if(e.getClickCount()==2 && sesion!=null && sesion.administrador())
+                ejecutar(()->editarProducto(productoSeleccionado(tabla),filtro.getText()));
         }});
         baja.addActionListener(e->ejecutar(()->{
             Producto p=productoSeleccionado(tabla);
@@ -279,8 +304,8 @@ public final class VentanaPrincipal extends JFrame {
     }
     private void editarProducto(Producto anterior,String filtro)throws Exception {
         JTextField codigo=new JTextField(anterior==null?"":anterior.codigo()),nombre=new JTextField(anterior==null?"":anterior.nombre()),
-            precio=new JTextField(anterior==null?"":Moneda.editable(anterior.precioVenta())),
-            costo=new JTextField(anterior==null?"":Moneda.editable(anterior.costo())),
+            precio=new CampoMoneda(anterior==null?BigDecimal.ZERO:anterior.precioVenta()),
+            costo=new CampoMoneda(anterior==null?BigDecimal.ZERO:anterior.costo()),
             stock=new JTextField(anterior==null?"0":String.valueOf(anterior.stock())),
             min=new JTextField(anterior==null||anterior.stockMinimo()==null?"":anterior.stockMinimo().toString()),
             max=new JTextField(anterior==null||anterior.stockMaximo()==null?"":anterior.stockMaximo().toString());
