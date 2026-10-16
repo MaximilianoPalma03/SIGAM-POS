@@ -36,8 +36,8 @@ public final class VentaServicio {
                 }
                 for (var item : cantidades.entrySet()) {
                     Producto p = actuales.get(item.getKey());
-                    try (PreparedStatement ps = c.prepareStatement("INSERT INTO DetalleVenta(venta_id,producto_codigo,cantidad,precio_unitario) VALUES(?,?,?,?)")) {
-                        ps.setLong(1,ventaId); ps.setString(2,p.codigo()); ps.setInt(3,item.getValue()); ps.setBigDecimal(4,p.precioVenta()); ps.executeUpdate();
+                    try (PreparedStatement ps = c.prepareStatement("INSERT INTO DetalleVenta(venta_id,producto_codigo,cantidad,precio_unitario,costo_unitario) VALUES(?,?,?,?,?)")) {
+                        ps.setLong(1,ventaId); ps.setString(2,p.codigo()); ps.setInt(3,item.getValue()); ps.setBigDecimal(4,p.precioVenta()); ps.setBigDecimal(5,p.costo()); ps.executeUpdate();
                     }
                     try (PreparedStatement ps = c.prepareStatement("UPDATE Producto SET stock=stock-? WHERE codigo=? AND stock>=?")) {
                         ps.setInt(1,item.getValue()); ps.setString(2,p.codigo()); ps.setInt(3,item.getValue());
@@ -49,6 +49,9 @@ public final class VentaServicio {
                     try (PreparedStatement ps = c.prepareStatement("INSERT INTO Pago(venta_id,medio_pago,monto) VALUES(?,?,?)",Statement.RETURN_GENERATED_KEYS)) {
                         ps.setLong(1,ventaId); ps.setString(2,pago.medio().name()); ps.setBigDecimal(3,pago.monto()); ps.executeUpdate();
                         pagoId = idGenerado(ps);
+                    }
+                    if (pago.medio() == MedioPago.TRANSFERENCIA || pago.medio() == MedioPago.QR) {
+                        CajaDigitalServicio.cobroEnTransaccion(c,cajaId,empleadoId,pagoId,pago.medio().name(),pago.monto());
                     }
                     if (pago.medio() == MedioPago.EFECTIVO) {
                         try (PreparedStatement ps = c.prepareStatement("INSERT INTO MovimientoCaja(caja_id,pago_id,empleado_id,tipo,monto,motivo) VALUES(?,?,?,'INGRESO_VENTA',?,'Cobro en efectivo')")) {

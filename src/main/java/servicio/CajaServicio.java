@@ -12,7 +12,12 @@ public final class CajaServicio {
     public record Resumen(BigDecimal fondoInicial, BigDecimal ventasEfectivo,
                           BigDecimal entradas, BigDecimal salidas, BigDecimal esperado) { }
 
-    public long abrir(long turnoId, long empleadoId, BigDecimal fondo) throws SQLException {
+    public long abrir(long turnoId,long empleadoId,BigDecimal fondo) throws SQLException {
+        return abrir(turnoId,empleadoId,fondo,false,BigDecimal.ZERO);
+    }
+    public long abrir(long turnoId, long empleadoId, BigDecimal fondo,
+                      boolean usarMercadoPago,BigDecimal saldoDigital) throws SQLException {
+        if(usarMercadoPago)CajaDigitalServicio.validar(saldoDigital,false);
         if(fondo==null || fondo.signum()<0 || fondo.scale()>2)throw new IllegalArgumentException("Fondo inicial inválido");
         try(Connection c=Conexion.abrir()) {
             c.setAutoCommit(false);
@@ -55,6 +60,7 @@ public final class CajaServicio {
                     ps.setLong(1,turnoId);ps.setLong(2,jornada);ps.setBigDecimal(3,fondo);
                     ps.executeUpdate();cajaId=VentaServicio.idGenerado(ps);
                 }
+                if(usarMercadoPago)CajaDigitalServicio.abrirEnTransaccion(c,cajaId,saldoDigital);
                 c.commit();return cajaId;
             } catch(SQLException | RuntimeException e) {c.rollback();throw e;}
             finally {
@@ -81,6 +87,8 @@ public final class CajaServicio {
             c.setAutoCommit(false);
             try {
                 VentaServicio.comprobarCaja(c,cajaId,empleadoId);
+                if(movimiento instanceof EgresoCaja && resumen(c,cajaId).esperado().compareTo(movimiento.getMonto())<0)
+                    throw new IllegalArgumentException("La salida supera el efectivo esperado disponible");
                 try(PreparedStatement ps=c.prepareStatement("INSERT INTO MovimientoCaja(caja_id,empleado_id,tipo,monto,motivo) VALUES(?,?,?,?,?)")) {
                     ps.setLong(1,cajaId);ps.setLong(2,empleadoId);ps.setString(3,movimiento.tipo());
                     ps.setBigDecimal(4,movimiento.getMonto());ps.setString(5,movimiento.getMotivo());ps.executeUpdate();
@@ -127,6 +135,10 @@ public final class CajaServicio {
         return cerrar(cajaId,empleadoId,contado,proximo,null);
     }
     public BigDecimal cerrar(long cajaId,long empleadoId,BigDecimal contado,BigDecimal proximo,String observaciones) throws SQLException {
+        return cerrar(cajaId,empleadoId,contado,proximo,observaciones,null,null);
+    }
+    public BigDecimal cerrar(long cajaId,long empleadoId,BigDecimal contado,BigDecimal proximo,
+                            String observaciones,BigDecimal digitalDeclarado,BigDecimal digitalProximo) throws SQLException {
         if(contado==null || proximo==null || contado.signum()<0 || proximo.signum()<0 || contado.scale()>2 || proximo.scale()>2)
             throw new IllegalArgumentException("Los importes del cierre deben ser positivos y con máximo dos decimales");
         if(proximo.compareTo(contado)>0)
@@ -136,6 +148,12 @@ public final class CajaServicio {
             c.setAutoCommit(false);
             try {
                 VentaServicio.comprobarCaja(c,cajaId,empleadoId);
+                CajaDigitalServicio.Resumen digital=CajaDigitalServicio.resumen(c,cajaId);
+                if(digital!=null) {
+                    if(digitalDeclarado==null||digitalProximo==null)
+                        throw new IllegalArgumentException("Debés declarar saldo y fondo de Mercado Pago para cerrar la jornada");
+                    CajaDigitalServicio.cerrarEnTransaccion(c,cajaId,empleadoId,digitalDeclarado,digitalProximo,observaciones);
+                }
                 Resumen r=resumen(c,cajaId);
                 BigDecimal diferencia=contado.subtract(r.esperado());
                 try(PreparedStatement ps=c.prepareStatement("INSERT INTO ArqueoCaja(caja_id,empleado_id,efectivo_esperado,efectivo_contado,diferencia,fondo_proximo_turno,observaciones) VALUES(?,?,?,?,?,?,?)")) {
