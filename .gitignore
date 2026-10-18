@@ -1,7 +1,6 @@
-﻿# Maven y Java
+# Archivos generados por Maven
 target/
 *.class
-
 # IDE
 .idea/
 *.iml
@@ -9,12 +8,20 @@ target/
 .settings/
 .project
 .classpath
-
-# Configuraciones privadas
+# Datos personales o de entorno
 .env
 .env.*
 *.log
-
-# Sistema operativo
+# Sistema
 Thumbs.db
 .DS_Store
+
+# Distribución binaria y MySQL portátil (no subir a Git)
+dist/
+mysql/
+mysql-data/
+*.dpapi
+conexion.properties
+mysql.ini
+SIGAM-POS_20*.sql
+mysql-root.dpapi

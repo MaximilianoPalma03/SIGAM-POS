@@ -4,6 +4,7 @@ import ar.com.sigampos.servicio.AnalisisAvanzadoServicio;
 import ar.com.sigampos.servicio.AnalisisAvanzadoServicio.*;
 import ar.com.sigampos.servicio.PeriodoAnalisis;
 import ar.com.sigampos.util.Moneda;
+import ar.com.sigampos.util.ArchivoCsv;
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -55,17 +56,24 @@ public final class PanelAnalisisComercial extends JPanel {
     private boolean cargando=false;
 
     public PanelAnalisisComercial(Consumer<String> verProducto) {
-        super(new BorderLayout(8,8));this.verProducto=Objects.requireNonNull(verProducto);
+        super(new BorderLayout(12,12));this.verProducto=Objects.requireNonNull(verProducto);
         Arrays.fill(periodos,PeriodoAnalisis.UN_MES);
-        setBorder(BorderFactory.createEmptyBorder(10,12,10,12));
-        JPanel superior=new JPanel(new BorderLayout(4,6));
+        setBackground(TemaVisual.FONDO);
+        setBorder(BorderFactory.createEmptyBorder(16,18,16,18));
+        JPanel superior=new JPanel(new BorderLayout(0,12));
+        superior.setOpaque(false);
         JPanel encabezado=new JPanel(new BorderLayout());
-        JLabel titulo=new JLabel("ANÁLISIS COMERCIAL · Estadísticas de los últimos meses");
-        titulo.setFont(titulo.getFont().deriveFont(Font.BOLD,15f));
+        encabezado.setOpaque(false);
+        JLabel titulo=new JLabel("Panel comercial");
+        titulo.setForeground(TemaVisual.AZUL_OSCURO);
+        titulo.setFont(new Font("Segoe UI",Font.BOLD,20));
         encabezado.add(titulo,BorderLayout.WEST);
+        periodoVisible.setForeground(TemaVisual.SECUNDARIO);
+        periodoVisible.setFont(new Font("Segoe UI",Font.PLAIN,12));
         encabezado.add(periodoVisible,BorderLayout.EAST);
         superior.add(encabezado,BorderLayout.NORTH);
-        JPanel metricas=new JPanel(new GridLayout(2,3,8,7));
+        JPanel metricas=new JPanel(new GridLayout(2,3,12,11));
+        metricas.setOpaque(false);
         metricas.add(indicador("VENTAS",ventas));metricas.add(indicador("FACTURACIÓN NOMINAL",facturacion));
         metricas.add(indicador("TICKET PROMEDIO",ticket));metricas.add(indicador("UNIDADES VENDIDAS",unidades));
         metricas.add(indicador("GANANCIA BRUTA CONOCIDA*",ganancia));metricas.add(indicador("HORA PICO",pico));
@@ -77,12 +85,19 @@ public final class PanelAnalisisComercial extends JPanel {
         secciones.addTab("Oportunidades",panelOportunidades());
         secciones.addTab("Vendedores",panelListado(4,tVendedores,graficoVendedores));
         secciones.addTab("Medios de pago",panelListado(5,tPagos,graficoMedios));
+        secciones.setFont(new Font("Segoe UI",Font.PLAIN,13));
+        secciones.setBackground(TemaVisual.BLANCO);
         add(secciones,BorderLayout.CENTER);
-        JPanel inferior=new JPanel(new BorderLayout(4,4));
-        JLabel nota=new JLabel("* Ganancia bruta = venta - costo histórico conocido; no incluye gastos. Ventas anteriores a v0.6.0: costo desconocido.");
-        nota.setFont(nota.getFont().deriveFont(11f));
+        JPanel inferior=new JPanel(new BorderLayout(4,8));
+        inferior.setOpaque(false);
+        JLabel nota=new JLabel("* Ganancia bruta estimada = ventas − costos históricos conocidos; sin gastos. Los períodos anteriores pueden tener costos incompletos.");
+        nota.setFont(new Font("Segoe UI",Font.PLAIN,11));
+        nota.setForeground(TemaVisual.SECUNDARIO);
         inferior.add(nota,BorderLayout.NORTH);
-        JPanel pie=new JPanel(new BorderLayout(8,0));
+        JPanel pie=new JPanel(new BorderLayout(12,0));
+        pie.setOpaque(false);
+        estado.setForeground(TemaVisual.SECUNDARIO);
+        estado.setFont(new Font("Segoe UI",Font.PLAIN,12));
         pie.add(estado,BorderLayout.CENTER);pie.add(exportar,BorderLayout.EAST);
         inferior.add(pie,BorderLayout.SOUTH);add(inferior,BorderLayout.SOUTH);
         exportar.addActionListener(e->exportarVisible());
@@ -106,40 +121,81 @@ public final class PanelAnalisisComercial extends JPanel {
         });
         return t;
     }
+    /** Tarjeta para una métrica: el color de acento ayuda a recorrer el dashboard. */
     private static JPanel indicador(String titulo,JLabel dato){
-        JPanel p=new JPanel(new BorderLayout(4,3));
-        p.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(216,225,237)),
-            BorderFactory.createEmptyBorder(7,12,7,12)));
-        JLabel l=new JLabel(titulo);l.setFont(l.getFont().deriveFont(Font.BOLD,10f));
-        dato.setFont(dato.getFont().deriveFont(Font.BOLD,17f));
-        p.add(l,BorderLayout.NORTH);p.add(dato,BorderLayout.CENTER);return p;
+        JPanel p=new JPanel(new BorderLayout(6,8));
+        p.setOpaque(true);
+        p.setBackground(TemaVisual.BLANCO);
+        p.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(TemaVisual.BORDE),
+            BorderFactory.createEmptyBorder(13,16,13,16)));
+        JLabel l=new JLabel(titulo);
+        l.setFont(new Font("Segoe UI",Font.BOLD,11));
+        l.setForeground(TemaVisual.SECUNDARIO);
+        dato.setFont(new Font("Segoe UI",Font.BOLD,22));
+        dato.setForeground(TemaVisual.AZUL_OSCURO);
+        p.add(l,BorderLayout.NORTH);
+        p.add(dato,BorderLayout.CENTER);
+        return p;
     }
     private JPanel selector(int indice,String descripcion,JComponent izquierda){
         JPanel barra=new JPanel(new BorderLayout(10,2));
-        JPanel izq=new JPanel(new FlowLayout(FlowLayout.LEFT,6,3));
+        barra.setOpaque(true);
+        barra.setBackground(TemaVisual.BLANCO);
+        barra.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(TemaVisual.BORDE),
+            BorderFactory.createEmptyBorder(8,12,8,12)));
+        JPanel izq=new JPanel(new FlowLayout(FlowLayout.LEFT,7,3));
+        izq.setOpaque(false);
         if(descripcion!=null && !descripcion.isBlank())izq.add(new JLabel(descripcion));
-        if(izquierda!=null)izq.add(izquierda);
+        if(izquierda!=null){
+            if(izquierda instanceof JPanel jp)jp.setOpaque(false);
+            izq.add(izquierda);
+        }
         barra.add(izq,BorderLayout.WEST);
-        JPanel derecha=new JPanel(new FlowLayout(FlowLayout.RIGHT,3,2));
+        JPanel derecha=new JPanel(new FlowLayout(FlowLayout.RIGHT,5,2));
+        derecha.setOpaque(false);
+        JLabel etiqueta=new JLabel("PERÍODO");
+        etiqueta.setForeground(TemaVisual.SECUNDARIO);
+        etiqueta.setFont(new Font("Segoe UI",Font.BOLD,10));
+        derecha.add(etiqueta);
         ButtonGroup grupo=new ButtonGroup();
+        java.util.List<JToggleButton> botones=new ArrayList<>();
         for(PeriodoAnalisis periodo:PeriodoAnalisis.values()){
             JToggleButton boton=new JToggleButton(periodo.etiqueta());
+            boton.setFont(new Font("Segoe UI",Font.BOLD,12));
+            boton.putClientProperty("JButton.buttonType","roundRect");
+            boton.setFocusPainted(false);
+            boton.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            boton.setMargin(new Insets(6,13,6,13));
             boton.setSelected(periodo==periodos[indice]);
-            grupo.add(boton);derecha.add(boton);
-            boton.addActionListener(e->{periodos[indice]=periodo;if(isShowing() && secciones.getSelectedIndex()==indice)cargar();});
+            grupo.add(boton);derecha.add(boton);botones.add(boton);
+            boton.addActionListener(e->{
+                periodos[indice]=periodo;
+                actualizarColoresPeriodo(botones);
+                if(isShowing() && secciones.getSelectedIndex()==indice)cargar();
+            });
         }
+        actualizarColoresPeriodo(botones);
         barra.add(derecha,BorderLayout.EAST);
         return barra;
     }
+    private static void actualizarColoresPeriodo(java.util.List<JToggleButton> botones){
+        for(JToggleButton boton:botones){
+            boton.setBackground(boton.isSelected()?TemaVisual.AZUL:TemaVisual.BLANCO);
+            boton.setForeground(boton.isSelected()?TemaVisual.BLANCO:TemaVisual.AZUL_OSCURO);
+        }
+    }
     private JPanel panelGrafico(int indice,GraficoAnalisis grafico,JComboBox<String> metrica,JTable datos){
-        JPanel p=new JPanel(new BorderLayout(7,7));
+        JPanel p=new JPanel(new BorderLayout(0,10));
+        p.setOpaque(false);
         p.add(selector(indice,"Métrica:",metrica),BorderLayout.NORTH);
-        JSplitPane particion=new JSplitPane(JSplitPane.VERTICAL_SPLIT,grafico,new JScrollPane(datos));
-        particion.setResizeWeight(.61);particion.setDividerLocation(265);
+        JSplitPane particion=particionGrafico(grafico,datos,.71);
         p.add(particion,BorderLayout.CENTER);return p;
     }
     private JPanel panelProductos(){
-        JPanel p=new JPanel(new BorderLayout(6,6));
+        JPanel p=new JPanel(new BorderLayout(0,10));
+        p.setOpaque(false);
         JPanel filtros=new JPanel(new FlowLayout(FlowLayout.LEFT,5,0));
         filtros.add(new JLabel("Ordenar:"));filtros.add(ordenProductos);
         JButton ver=new JButton("Ver producto");ver.addActionListener(e->abrirProducto(tProductos));filtros.add(ver);
@@ -147,23 +203,36 @@ public final class PanelAnalisisComercial extends JPanel {
         tProductos.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         int[] anchos={130,200,75,90,125,105,140,65,115,255};
         for(int i=0;i<anchos.length;i++)tProductos.getColumnModel().getColumn(i).setPreferredWidth(anchos[i]);
-        JSplitPane particion=new JSplitPane(JSplitPane.VERTICAL_SPLIT,
-            graficoProductos,new JScrollPane(tProductos));
-        particion.setResizeWeight(.46);particion.setDividerLocation(220);
+        JSplitPane particion=particionGrafico(graficoProductos,tProductos,.63);
         p.add(particion,BorderLayout.CENTER);return p;
     }
     private JPanel panelOportunidades(){
-        JPanel p=new JPanel(new BorderLayout(6,6));
+        JPanel p=new JPanel(new BorderLayout(0,10));
+        p.setOpaque(false);
         JButton ver=new JButton("Ver producto");ver.addActionListener(e->abrirProducto(tOportunidades));
         p.add(selector(3,"Alertas y oportunidades comerciales ·",ver),BorderLayout.NORTH);
         p.add(new JScrollPane(tOportunidades),BorderLayout.CENTER);return p;
     }
     private JPanel panelListado(int indice,JTable datos,GraficoAnalisis grafico){
-        JPanel p=new JPanel(new BorderLayout(6,6));
+        JPanel p=new JPanel(new BorderLayout(0,10));
+        p.setOpaque(false);
         p.add(selector(indice,indice==4?"Resultados por vendedor":"Recaudación por medio de pago",null),BorderLayout.NORTH);
-        JSplitPane particion=new JSplitPane(JSplitPane.VERTICAL_SPLIT,grafico,new JScrollPane(datos));
-        particion.setResizeWeight(.58);particion.setDividerLocation(250);
+        JSplitPane particion=particionGrafico(grafico,datos,.70);
         p.add(particion,BorderLayout.CENTER);return p;
+    }
+    /** Prioriza el gráfico y mantiene una tabla consultable debajo. */
+    private static JSplitPane particionGrafico(GraficoAnalisis grafico,JTable tabla,double peso){
+        JScrollPane tablaScroll=new JScrollPane(tabla);
+        tablaScroll.setBorder(BorderFactory.createLineBorder(TemaVisual.BORDE));
+        JSplitPane division=new JSplitPane(JSplitPane.VERTICAL_SPLIT,grafico,tablaScroll);
+        division.setBorder(BorderFactory.createEmptyBorder());
+        division.setDividerSize(9);
+        division.setContinuousLayout(true);
+        division.setResizeWeight(peso);
+        SwingUtilities.invokeLater(()->{
+            if(division.getHeight()>0)division.setDividerLocation(peso);
+        });
+        return division;
     }
     private void abrirProducto(JTable t){
         int fila=t.getSelectedRow();
@@ -313,39 +382,36 @@ public final class PanelAnalisisComercial extends JPanel {
         graficoHoras.mostrar(dinero?"Facturación por hora ($)":"Operaciones por hora",puntos);
     }
     private void exportarVisible(){
-        if(actual==null || cargando){JOptionPane.showMessageDialog(this,"Esperá a que finalice la consulta.");return;}
-        JTable t=switch(secciones.getSelectedIndex()){
+        if(actual==null || cargando){
+            JOptionPane.showMessageDialog(this,"Esperá a que finalice la consulta.");return;
+        }
+        JTable tabla=switch(secciones.getSelectedIndex()){
             case 0->tDias;case 1->tHoras;case 2->tProductos;
             case 3->tOportunidades;case 4->tVendedores;default->tPagos;
         };
-        JFileChooser archivo=new JFileChooser();
-        archivo.setSelectedFile(new java.io.File("sigam_analisis_"+periodos[secciones.getSelectedIndex()].meses()+"m.csv"));
-        if(archivo.showSaveDialog(this)!=JFileChooser.APPROVE_OPTION)return;
-        Path destino=archivo.getSelectedFile().toPath();
-        if(Files.exists(destino) && JOptionPane.showConfirmDialog(this,"¿Sobrescribir el archivo existente?",
-            "Confirmar",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
-        try(java.io.BufferedWriter salida=Files.newBufferedWriter(destino,StandardCharsets.UTF_8)){
-            salida.write('\ufeff'); // Excel: BOM UTF-8 y delimitador punto y coma
-            List<String> fila=new ArrayList<>();
-            for(int c=0;c<t.getColumnCount();c++)fila.add(t.getColumnName(c));
-            escribirCsv(salida,fila);
-            for(int r=0;r<t.getRowCount();r++){
-                fila.clear();
-                for(int c=0;c<t.getColumnCount();c++){
-                    Object v=t.getValueAt(r,c);
-                    fila.add(v==null?"":v instanceof BigDecimal b?b.toPlainString():v.toString());
-                }
-                escribirCsv(salida,fila);
+        JFileChooser elegir=new JFileChooser();
+        elegir.setSelectedFile(new java.io.File("sigam_analisis_"+
+            periodos[secciones.getSelectedIndex()].meses()+"m.csv"));
+        elegir.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("Archivos CSV","csv"));
+        if(elegir.showSaveDialog(this)!=JFileChooser.APPROVE_OPTION)return;
+        Path destino=elegir.getSelectedFile().toPath();
+        if(!destino.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".csv"))
+            destino=destino.resolveSibling(destino.getFileName()+".csv");
+        if(Files.exists(destino) && JOptionPane.showConfirmDialog(this,
+            "¿Sobrescribir el archivo existente?","Confirmar",
+            JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
+        try {
+            List<String> columnas=new ArrayList<>();
+            for(int c=0;c<tabla.getColumnCount();c++)columnas.add(tabla.getColumnName(c));
+            List<List<?>> filas=new ArrayList<>();
+            for(int r=0;r<tabla.getRowCount();r++){
+                List<Object> fila=new ArrayList<>();
+                for(int c=0;c<tabla.getColumnCount();c++)fila.add(tabla.getValueAt(r,c));
+                filas.add(fila);
             }
+            ArchivoCsv.guardar(destino,columnas,filas);
             JOptionPane.showMessageDialog(this,"CSV exportado correctamente.");
         }catch(Exception e){JOptionPane.showMessageDialog(this,"Error de exportación: "+e.getMessage(),
             "No se pudo exportar",JOptionPane.ERROR_MESSAGE);}
-    }
-    private static void escribirCsv(java.io.Writer salida,List<String> fila)throws java.io.IOException {
-        for(int i=0;i<fila.size();i++){
-            if(i>0)salida.write(';');
-            salida.write('"');salida.write(fila.get(i).replace("\"","\"\""));salida.write('"');
-        }
-        salida.write("\r\n");
     }
 }

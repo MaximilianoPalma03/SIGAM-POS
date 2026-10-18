@@ -6,12 +6,16 @@ import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import javax.swing.plaf.basic.BasicTabbedPaneUI;
 import ar.com.sigampos.util.Moneda;
 import ar.com.sigampos.util.CampoMoneda;
 import java.awt.*;
 import java.math.BigDecimal;
 import java.sql.SQLException;
 import java.time.*;
+import java.nio.file.Path;
+import java.nio.file.Files;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.*;
 import java.util.List;
 
@@ -27,8 +31,15 @@ public final class VentanaPrincipal extends JFrame {
     private final JornadasServicio jornadas=new JornadasServicio();
     private final AlertasServicio alertas=new AlertasServicio();
     private final CajaDigitalServicio digital=new CajaDigitalServicio();
+    private final ConfiguracionProductos configuracionProductos=new ConfiguracionProductos();
+    private final ExportacionReportesServicio exportacion=new ExportacionReportesServicio();
+    private final BackupServicio backups=new BackupServicio();
+    private final AtomicBoolean backupEnCurso=new AtomicBoolean(false);
+    private Instant ultimoIntentoBackup=Instant.EPOCH;
+    private final JButton botonConfiguracion=new JButton("Configuraciones");
     private final JButton botonAlertas=new JButton("Avisos de stock");
     private JTable vistaProductos;
+    private final JLabel conteoProductos=new JLabel("Cargando productos...");
     private JTextField filtroProductos;
     private final List<JButton> accionesProductos=new ArrayList<>();
     private PersonalServicio.Sesion sesion;
@@ -52,39 +63,166 @@ public final class VentanaPrincipal extends JFrame {
     };
     private final JLabel sesionLabel=new JLabel();
     private final JTabbedPane pestañas=new JTabbedPane();
+    private final JButton[] botonesNavegacion=new JButton[5];
+    private final JLabel tituloSeccion=new JLabel("Ventas");
+    private static final String[] MODULOS={"Ventas","Productos","Caja","Personal / Turnos","Análisis"};
+    private static final IconoSeccion.Tipo[] ICONOS={IconoSeccion.Tipo.VENTAS,
+        IconoSeccion.Tipo.PRODUCTOS, IconoSeccion.Tipo.CAJA,
+        IconoSeccion.Tipo.PERSONAL, IconoSeccion.Tipo.ANALISIS};
 
     public VentanaPrincipal() {
-        super("SIGAM-POS — Terminal de ventas");
+        super("SIGAM-POS — Gestión comercial");
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
-        addWindowListener(new java.awt.event.WindowAdapter(){@Override public void windowClosing(java.awt.event.WindowEvent e){salirDelPrograma();}});setSize(1200,760);setLocationRelativeTo(null);
+        addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override public void windowClosing(java.awt.event.WindowEvent e) { salirDelPrograma(); }
+        });
+        setSize(1380, 840);
+        setMinimumSize(new Dimension(1080, 660));
+        setLocationRelativeTo(null);
         setLayout(new BorderLayout());
+        getContentPane().setBackground(TemaVisual.FONDO);
         caja.setEditable(false);
-        var cabecera=new JPanel(new BorderLayout());cabecera.setBackground(new Color(30,97,155));
-        JLabel titulo=new JLabel(" SIGAM-POS  |  Terminal de mostrador");titulo.setFont(titulo.getFont().deriveFont(Font.BOLD,20f));titulo.setForeground(Color.WHITE);
-        cabecera.add(titulo,BorderLayout.WEST);sesionLabel.setForeground(Color.WHITE);
-        JPanel acceso=new JPanel(new FlowLayout(FlowLayout.RIGHT));acceso.setOpaque(false);
+
+        // Cabecera despejada: navegación lateral y operaciones de usuario a la derecha.
+        JPanel cabecera=new JPanel(new BorderLayout(14,0));
+        cabecera.setBackground(TemaVisual.BLANCO);
+        cabecera.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0,0,1,0,TemaVisual.BORDE),
+            BorderFactory.createEmptyBorder(14,24,14,24)));
+        tituloSeccion.setFont(new Font("Segoe UI",Font.BOLD,23));
+        tituloSeccion.setForeground(TemaVisual.AZUL_OSCURO);
+        cabecera.add(tituloSeccion,BorderLayout.WEST);
+        sesionLabel.setForeground(TemaVisual.SECUNDARIO);
+        JPanel acceso=new JPanel(new FlowLayout(FlowLayout.RIGHT,10,0));
+        acceso.setOpaque(false);
         JButton cambiarClave=new JButton("Mis credenciales"),cerrarSesion=new JButton("Cerrar sesión");
-        acceso.add(sesionLabel);acceso.add(cambiarClave);acceso.add(cerrarSesion);
+        acceso.add(sesionLabel);
+        acceso.add(botonConfiguracion);
+        acceso.add(cambiarClave);
+        acceso.add(cerrarSesion);
         cabecera.add(acceso,BorderLayout.EAST);
+        botonConfiguracion.addActionListener(e->ejecutar(()->abrirConfiguraciones()));
         cambiarClave.addActionListener(e->ejecutar(()->editarMisCredenciales()));
         cerrarSesion.addActionListener(e->cerrarSesion());
-        cabecera.setBorder(BorderFactory.createEmptyBorder(12,8,12,16));add(cabecera,BorderLayout.NORTH);
-        pestañas.addTab("Ventas",panelVentas());pestañas.addTab("Productos",panelProductos());
-        pestañas.addTab("Caja",panelCaja());pestañas.addTab("Personal / Turnos",panelPersonal());pestañas.addTab("Análisis",panelAnalisis());
+        add(cabecera,BorderLayout.NORTH);
+
+        pestañas.addTab("Ventas",panelVentas());
+        pestañas.addTab("Productos",panelProductos());
+        pestañas.addTab("Caja",panelCaja());
+        pestañas.addTab("Personal / Turnos",panelPersonal());
+        pestañas.addTab("Análisis",panelAnalisis());
+        // Conserva el JTabbedPane (y sus permisos) sin duplicar los encabezados en pantalla.
+        pestañas.setUI(new PestanasOcultasUI());
         add(pestañas,BorderLayout.CENTER);
+        add(crearBarraNavegacion(),BorderLayout.WEST);
         pestañas.addChangeListener(e->{
+            actualizarNavegacion();
             if(sesion!=null && pestañas.getSelectedIndex()==0)
                 ejecutar(()->cargarCatalogo(""));
         });
+        TemaVisual.aplicar(pestañas);
+        TemaVisual.aplicar(cabecera);
+        actualizarNavegacion();
+        // Cuando la aplicación queda abierta todo el día, comprueba cada hora el respaldo automático.
+        javax.swing.Timer relojBackups=new javax.swing.Timer(60*60*1000,e->revisarBackupAutomatico());
+        relojBackups.start();
         SwingUtilities.invokeLater(()->{
             try {
                 if(personal.crearAdminInicialSiFalta()) mensaje("Primera instalación: usuario Admin y contraseña temporal 1234. Cambiala desde Mis credenciales.");
                 if(!iniciarSesion()) {dispose();return;}
                 actualizarPermisos();
                 cargarProductos("");cargarCatalogo("");actualizarAlertas();
+                // Respaldo opcional al iniciar: nunca bloquea la interfaz.
+                revisarBackupAutomatico();
             } catch(Exception e) {error(e);dispose();}
         });
     }
+    /** Navegación unificada: respeta los mismos índices y permisos que las pestañas originales. */
+    private JPanel crearBarraNavegacion() {
+        JPanel lateral=new JPanel();
+        lateral.setBackground(TemaVisual.LATERAL);
+        lateral.setLayout(new BoxLayout(lateral,BoxLayout.Y_AXIS));
+        lateral.setPreferredSize(new Dimension(225,0));
+        lateral.setBorder(BorderFactory.createEmptyBorder(23,12,18,12));
+
+        JLabel marca=new JLabel("  SIGAM-POS");
+        marca.setAlignmentX(Component.LEFT_ALIGNMENT);
+        marca.setFont(new Font("Segoe UI",Font.BOLD,20));
+        marca.setForeground(Color.WHITE);
+        lateral.add(marca);
+        JLabel subtitulo=new JLabel("      Sistema de gestión");
+        subtitulo.setAlignmentX(Component.LEFT_ALIGNMENT);
+        subtitulo.setForeground(new Color(148,178,203));
+        subtitulo.setFont(new Font("Segoe UI",Font.PLAIN,12));
+        lateral.add(Box.createVerticalStrut(5));
+        lateral.add(subtitulo);
+        lateral.add(Box.createVerticalStrut(38));
+
+        JLabel encabezado=new JLabel("     MÓDULOS");
+        encabezado.setAlignmentX(Component.LEFT_ALIGNMENT);
+        encabezado.setForeground(new Color(135,161,182));
+        encabezado.setFont(new Font("Segoe UI",Font.BOLD,11));
+        lateral.add(encabezado);
+        lateral.add(Box.createVerticalStrut(12));
+
+        for(int i=0;i<MODULOS.length;i++) {
+            final int indice=i;
+            JButton boton=new JButton(MODULOS[i]);
+            boton.putClientProperty("sigam.tipo","navegacion");
+            boton.setAlignmentX(Component.LEFT_ALIGNMENT);
+            boton.setMaximumSize(new Dimension(200,49));
+            boton.setPreferredSize(new Dimension(200,46));
+            boton.setHorizontalAlignment(SwingConstants.LEFT);
+            boton.setIconTextGap(13);
+            boton.setFocusPainted(false);
+            boton.setOpaque(true);
+            boton.setBorderPainted(false);
+            boton.setContentAreaFilled(true);
+            boton.setBorder(BorderFactory.createEmptyBorder(12,15,12,10));
+            boton.setFont(new Font("Segoe UI",Font.BOLD,13));
+            boton.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            boton.addActionListener(e->{
+                if(pestañas.isEnabledAt(indice))pestañas.setSelectedIndex(indice);
+            });
+            botonesNavegacion[i]=boton;
+            lateral.add(boton);
+            lateral.add(Box.createVerticalStrut(5));
+        }
+        lateral.add(Box.createVerticalGlue());
+        JLabel version=new JLabel("  v1.0.0 RC1  ·  Versión académica");
+        version.setAlignmentX(Component.LEFT_ALIGNMENT);
+        version.setFont(new Font("Segoe UI",Font.PLAIN,11));
+        version.setForeground(new Color(150,171,189));
+        lateral.add(version);
+        return lateral;
+    }
+
+    /** Colorea la selección y bloquea módulos según el rol de la sesión. */
+    private void actualizarNavegacion() {
+        int seleccionado=pestañas.getSelectedIndex();
+        if(seleccionado<0)return;
+        tituloSeccion.setText(MODULOS[seleccionado]);
+        for(int i=0;i<botonesNavegacion.length;i++){
+            JButton boton=botonesNavegacion[i];
+            if(boton==null)continue;
+            boolean permitido=pestañas.isEnabledAt(i);
+            boolean activo=i==seleccionado;
+            boton.setEnabled(permitido);
+            boton.setBackground(activo?TemaVisual.AZUL:TemaVisual.LATERAL);
+            Color texto=!permitido?new Color(101,119,135):activo?Color.WHITE:new Color(195,210,224);
+            boton.setForeground(texto);
+            boton.setIcon(new IconoSeccion(ICONOS[i],texto,20));
+        }
+    }
+
+    /** El contenido se controla mediante JTabbedPane; los botones son el menú visible. */
+    private static final class PestanasOcultasUI extends BasicTabbedPaneUI {
+        @Override protected int calculateTabAreaHeight(int placement,int runs,int maxHeight){return 0;}
+        @Override protected int calculateTabAreaWidth(int placement,int runs,int maxWidth){return 0;}
+        @Override protected void paintTabArea(Graphics g,int placement,int index){/* menú lateral */}
+        @Override protected Insets getContentBorderInsets(int placement){return new Insets(0,0,0,0);}
+    }
+
     private boolean iniciarSesion(){
         while(true){
             JTextField usuario=new JTextField();JPasswordField clave=new JPasswordField();
@@ -106,10 +244,13 @@ public final class VentanaPrincipal extends JFrame {
     private void actualizarPermisos(){
         sesionLabel.setText(sesion.nombre()+"  |  "+sesion.rol()+"  ");
         pestañas.setEnabledAt(1,true); // Vendedor puede consultar stock, solo admin lo modifica.
+        botonConfiguracion.setVisible(sesion.administrador());
         for(JButton b:accionesProductos)b.setEnabled(sesion.administrador());
         pestañas.setEnabledAt(3,sesion.administrador());
         pestañas.setEnabledAt(4,sesion.administrador());
         pestañas.setSelectedIndex(0);
+        actualizarNavegacion();
+        revisarBackupAutomatico();
         try {
             Long activa=cajas.cajaAbiertaDe(sesion.empleadoId());
             caja.setText(activa==null?"":activa.toString());
@@ -172,15 +313,156 @@ public final class VentanaPrincipal extends JFrame {
             }
         }
     }
+    /** Configuraciones administrativas; la opción se conserva entre reinicios en esta PC. */
+    private void abrirConfiguraciones(){
+        if(sesion==null || !sesion.administrador())
+            throw new SecurityException("Solo el administrador puede cambiar la configuración");
+        JCheckBox automatico=new JCheckBox("Calcular precio de venta según un porcentaje de recargo");
+        automatico.setSelected(configuracionProductos.precioPorRecargoActivo());
+        automatico.setOpaque(false);
+        JLabel explicacion=new JLabel("<html>Al activar esta opción, el formulario de productos calculará " +
+            "el precio final a partir del costo y el porcentaje que ingreses.<br>" +
+            "<b>Ejemplo:</b> costo $ 10.000,00 + recargo del 30% = precio $ 13.000,00.<br>" +
+            "No modifica automáticamente productos que ya estén registrados.<br>" +
+            "Esta preferencia se guarda localmente para este usuario de Windows.</html>");
+        explicacion.setForeground(TemaVisual.SECUNDARIO);
+        JPanel producto=new JPanel(new BorderLayout(0,14));
+        producto.setBorder(BorderFactory.createEmptyBorder(20,18,20,18));
+        producto.add(automatico,BorderLayout.NORTH);
+        producto.add(explicacion,BorderLayout.CENTER);
+        JTabbedPane ajustes=new JTabbedPane();
+        ajustes.addTab("Productos",producto);
+        JPanel seguridad=new JPanel(new BorderLayout(0,12));
+        seguridad.setBorder(BorderFactory.createEmptyBorder(14,16,14,16));
+        JCheckBox respaldoAutomatico=new JCheckBox("Crear un respaldo cada 24 horas mientras SIGAM-POS esté abierto");
+        respaldoAutomatico.setSelected(backups.automatico());
+        JPanel seleccionCarpeta=new JPanel(new BorderLayout(8,0));
+        JTextField carpeta=new JTextField(backups.carpeta().toString());
+        JButton examinar=new JButton("Elegir carpeta...");
+        seleccionCarpeta.add(carpeta,BorderLayout.CENTER);
+        seleccionCarpeta.add(examinar,BorderLayout.EAST);
+        examinar.addActionListener(e->{
+            JFileChooser elegir=new JFileChooser(carpeta.getText());
+            elegir.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+            if(elegir.showOpenDialog(this)==JFileChooser.APPROVE_OPTION)
+                carpeta.setText(elegir.getSelectedFile().toPath().toString());
+        });
+        // Si el sistema está instalado fuera de las carpetas habituales, se puede elegir la herramienta.
+        JTextField rutaDump=new JTextField(backups.ejecutableConfigurado());
+        JButton buscarDump=new JButton("Examinar...");
+        JPanel seleccionDump=new JPanel(new BorderLayout(8,0));
+        seleccionDump.add(rutaDump,BorderLayout.CENTER);
+        seleccionDump.add(buscarDump,BorderLayout.EAST);
+        buscarDump.addActionListener(e->{
+            JFileChooser selector=new JFileChooser();
+            selector.setFileSelectionMode(JFileChooser.FILES_ONLY);
+            selector.setDialogTitle("Seleccionar mysqldump.exe");
+            if(selector.showOpenDialog(this)==JFileChooser.APPROVE_OPTION)
+                rutaDump.setText(selector.getSelectedFile().getAbsolutePath());
+        });
+        Path localizado=backups.localizarEjecutable();
+        JLabel informacionDump=new JLabel(rutaDump.getText().isBlank()
+            ?(localizado==null?"No se detectó mysqldump; seleccioná el archivo con Examinar."
+                :"Detección automática: "+localizado)
+            :"Usando ubicación elegida manualmente");
+        informacionDump.setForeground(TemaVisual.SECUNDARIO);
+        informacionDump.setFont(new Font("Segoe UI",Font.PLAIN,11));
+        JButton crearAhora=new JButton("Crear respaldo ahora (.sql)");
+        TemaVisual.botonPrincipal(crearAhora);
+        crearAhora.addActionListener(e->ejecutar(()->{
+            backups.configurar(Path.of(carpeta.getText()),respaldoAutomatico.isSelected());
+            backups.configurarEjecutable(rutaDump.getText());
+            crearBackupEnSegundoPlano();
+        }));
+        String ultimo=backups.ultimo()==null?"Todavía no hay respaldos registrados":
+            "Último respaldo: "+backups.ultimo().atZone(ZoneId.systemDefault());
+        JTextArea ayuda=new JTextArea("""
+            Incluye datos y estructura completa de la base MySQL.
+            Busca mysqldump.exe automáticamente; si no aparece, elegilo con Examinar.
+            El nuevo respaldo NO fija el nombre de la base: admite restaurar en otra base de prueba.
+            Los archivos SQL incluyen datos privados: guardalos fuera de GitHub.
+            Para validar el backup, restauralo en sigam_pos_prueba, nunca en la base de producción.
+            """);
+        ayuda.setEditable(false);ayuda.setOpaque(false);ayuda.setFont(new Font("Segoe UI",Font.PLAIN,12));
+        JPanel seguridadSuperior=new JPanel(new GridLayout(0,1,4,6));
+        seguridadSuperior.add(new JLabel("Carpeta de respaldos:"));
+        seguridadSuperior.add(seleccionCarpeta);
+        seguridadSuperior.add(respaldoAutomatico);
+        seguridadSuperior.add(new JLabel("mysqldump.exe (vacío = detectar automáticamente):"));
+        seguridadSuperior.add(seleccionDump);
+        seguridadSuperior.add(informacionDump);
+        seguridadSuperior.add(new JLabel(ultimo));
+        seguridad.add(seguridadSuperior,BorderLayout.NORTH);
+        seguridad.add(ayuda,BorderLayout.CENTER);
+        seguridad.add(crearAhora,BorderLayout.SOUTH);
+        ajustes.addTab("Copias de seguridad",seguridad);
+        ajustes.setPreferredSize(new Dimension(760,445));
+        if(JOptionPane.showConfirmDialog(this,ajustes,"Configuraciones",
+            JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE)==JOptionPane.OK_OPTION){
+            configuracionProductos.establecerPrecioPorRecargo(automatico.isSelected());
+            backups.configurar(Path.of(carpeta.getText()),respaldoAutomatico.isSelected());
+            backups.configurarEjecutable(rutaDump.getText());
+            mensaje("Configuración guardada.");
+            revisarBackupAutomatico();
+        }
+    }
+
+    /** Respaldo independiente de la interfaz y sin mostrar credenciales en pantalla. */
+    private void crearBackupEnSegundoPlano(){
+        if(sesion==null || !sesion.administrador())throw new SecurityException("Solo administradores pueden crear respaldos");
+        if(!backupEnCurso.compareAndSet(false,true))return;
+        new SwingWorker<Path,Void>(){
+            @Override protected Path doInBackground() throws Exception {return backups.crear();}
+            @Override protected void done(){
+                backupEnCurso.set(false);
+                try {mensaje("Respaldo guardado correctamente en:\n"+get());}
+                catch(Exception e){Throwable causa=e.getCause()==null?e:e.getCause();
+                    error(new IOExceptionConMensaje("No pudo completarse el respaldo: "+causa.getMessage()));}
+            }
+        }.execute();
+    }
+    private static final class IOExceptionConMensaje extends Exception {
+        IOExceptionConMensaje(String mensaje){super(mensaje);}
+    }
+    private void revisarBackupAutomatico(){
+        if(sesion==null || !sesion.administrador() || !backups.tocaAutomatico())return;
+        if(ultimoIntentoBackup.isAfter(Instant.now().minusSeconds(3600)))return;
+        ultimoIntentoBackup=Instant.now();
+        crearBackupEnSegundoPlano();
+    }
+
+    /** El diálogo de guardado permite elegir destino y no exporta silenciosamente a una ruta fija. */
+    private Path destinoCsv(String sugerido){
+        JFileChooser elegir=new JFileChooser();
+        elegir.setSelectedFile(new java.io.File(sugerido));
+        elegir.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("Archivos CSV (.csv)","csv"));
+        if(elegir.showSaveDialog(this)!=JFileChooser.APPROVE_OPTION)return null;
+        Path destino=elegir.getSelectedFile().toPath();
+        if(!destino.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".csv"))
+            destino=destino.resolveSibling(destino.getFileName()+".csv");
+        if(Files.exists(destino) && JOptionPane.showConfirmDialog(this,
+            "El archivo existe. ¿Deseás reemplazarlo?","Confirmar exportación",
+            JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return null;
+        return destino;
+    }
+
     private JPanel panelVentas(){
-        JPanel raiz=new JPanel(new BorderLayout(10,10));raiz.setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
+        JPanel raiz=new JPanel(new BorderLayout(14,14));raiz.setBorder(BorderFactory.createEmptyBorder(20,20,20,20));
         JTextField buscar=new JTextField(24); JSpinner cantidad=new JSpinner(new SpinnerNumberModel(1,1,999999,1));
-        JPanel superior=new JPanel(new FlowLayout(FlowLayout.LEFT,8,4));
-        superior.add(new JLabel("Buscar por nombre / código:"));superior.add(buscar);
-        superior.add(new JLabel("Cantidad:"));superior.add(cantidad);
+        JPanel superior=new JPanel(new BorderLayout(8,6));
+        TemaVisual.tarjeta(superior);
+        JPanel busqueda=new JPanel(new FlowLayout(FlowLayout.LEFT,10,0));
+        busqueda.setOpaque(false);
+        busqueda.add(new JLabel("Buscar por nombre / código:"));busqueda.add(buscar);
+        busqueda.add(new JLabel("Cantidad:"));busqueda.add(cantidad);
+        superior.add(busqueda,BorderLayout.NORTH);
+        JPanel controlesCatalogo=new JPanel(new FlowLayout(FlowLayout.LEFT,10,0));
+        controlesCatalogo.setOpaque(false);
         JButton agregar=new JButton("Agregar seleccionado"),quitar=new JButton("Quitar producto"),
             sumar=new JButton("+ 1"),restar=new JButton("− 1"),editarCantidad=new JButton("Editar cantidad");
-        superior.add(agregar);superior.add(botonAlertas);
+        TemaVisual.botonPrincipal(agregar);
+        controlesCatalogo.add(agregar);controlesCatalogo.add(botonAlertas);
+        superior.add(controlesCatalogo,BorderLayout.SOUTH);
         botonAlertas.addActionListener(e->ejecutar(()->abrirAlertas()));
         raiz.add(superior,BorderLayout.NORTH);
 
@@ -188,21 +470,40 @@ public final class VentanaPrincipal extends JFrame {
         catalogo.setAutoCreateRowSorter(true);catalogo.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         JTable tabla=new JTable(tablaCarrito);tabla.setRowHeight(25);
         JSplitPane medio=new JSplitPane(JSplitPane.VERTICAL_SPLIT);
-        JPanel arriba=new JPanel(new BorderLayout());arriba.add(new JLabel(" Productos disponibles (doble clic para agregar)"),BorderLayout.NORTH);
+        JPanel arriba=new JPanel(new BorderLayout(0,12));
+        TemaVisual.tarjeta(arriba);
+        JLabel tituloCatalogo=new JLabel("CATÁLOGO  ·  Doble clic para agregar");
+        tituloCatalogo.setForeground(TemaVisual.AZUL_OSCURO);
+        tituloCatalogo.setFont(new Font("Segoe UI",Font.BOLD,13));
+        arriba.add(tituloCatalogo,BorderLayout.NORTH);
         arriba.add(new JScrollPane(catalogo),BorderLayout.CENTER);
-        JPanel abajo=new JPanel(new BorderLayout());abajo.add(new JLabel(" Carrito actual"),BorderLayout.NORTH);
+        JPanel abajo=new JPanel(new BorderLayout(0,12));
+        TemaVisual.tarjeta(abajo);
+        JLabel tituloCarrito=new JLabel("CARRITO DE VENTA");
+        tituloCarrito.setForeground(TemaVisual.AZUL_OSCURO);
+        tituloCarrito.setFont(new Font("Segoe UI",Font.BOLD,13));
+        abajo.add(tituloCarrito,BorderLayout.NORTH);
         abajo.add(new JScrollPane(tabla),BorderLayout.CENTER);
         JPanel controlesCarrito=new JPanel(new FlowLayout(FlowLayout.LEFT,8,5));
         controlesCarrito.add(new JLabel("Producto seleccionado:"));
         for(JButton boton:new JButton[]{restar,sumar,editarCantidad,quitar})controlesCarrito.add(boton);
         abajo.add(controlesCarrito,BorderLayout.SOUTH);
         medio.setTopComponent(arriba);medio.setBottomComponent(abajo);medio.setResizeWeight(0.48);
+        medio.setBorder(BorderFactory.createEmptyBorder());
+        medio.setDividerSize(10);
         SwingUtilities.invokeLater(()->medio.setDividerLocation(0.48));
         raiz.add(medio,BorderLayout.CENTER);
 
-        JPanel inferior=new JPanel(new BorderLayout());total.setFont(total.getFont().deriveFont(Font.BOLD,26f));inferior.add(total,BorderLayout.WEST);
+        JPanel inferior=new JPanel(new BorderLayout());
+        TemaVisual.tarjeta(inferior);
+        total.setForeground(TemaVisual.AZUL_OSCURO);
+        total.setFont(new Font("Segoe UI",Font.BOLD,26));
+        inferior.add(total,BorderLayout.WEST);
         JPanel acciones=new JPanel(new FlowLayout(FlowLayout.RIGHT));acciones.add(new JLabel("Caja activa:"));acciones.add(caja);
-        JButton cobrar=new JButton("COBRAR");cobrar.setFont(cobrar.getFont().deriveFont(Font.BOLD,16f));acciones.add(cobrar);
+        JButton cobrar=new JButton("COBRAR");
+        TemaVisual.botonPrincipal(cobrar);
+        cobrar.setPreferredSize(new Dimension(138,43));
+        acciones.add(cobrar);
         inferior.add(acciones,BorderLayout.EAST);raiz.add(inferior,BorderLayout.SOUTH);
         Runnable cargar=()->ejecutar(()->cargarCatalogo(buscar.getText()));
         alCambiar(buscar,cargar); // Actualiza resultados sin exigir código exacto.
@@ -306,13 +607,48 @@ public final class VentanaPrincipal extends JFrame {
     private JPanel panelProductos(){
         JPanel raiz=new JPanel(new BorderLayout(8,8));raiz.setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
         JTextField filtro=new JTextField(22);filtroProductos=filtro;
-        JPanel arriba=new JPanel(new FlowLayout(FlowLayout.LEFT));
-        arriba.add(new JLabel("Buscar nombre o código:"));arriba.add(filtro);
+        JPanel arriba=new JPanel(new BorderLayout(8,8));
+        TemaVisual.tarjeta(arriba);
+        JPanel busqueda=new JPanel(new FlowLayout(FlowLayout.LEFT,10,0));
+        busqueda.setOpaque(false);
+        busqueda.add(new JLabel("Buscar nombre o código:"));busqueda.add(filtro);
+        arriba.add(busqueda,BorderLayout.NORTH);
         JButton nuevo=new JButton("Crear producto"),editar=new JButton("Editar seleccionado"),baja=new JButton("Desactivar"),activar=new JButton("Reactivar");
-        for(JButton b:new JButton[]{nuevo,editar,baja,activar}){arriba.add(b);accionesProductos.add(b);}
+        TemaVisual.botonPrincipal(nuevo);
+        JPanel accionesListado=new JPanel(new FlowLayout(FlowLayout.LEFT,10,0));
+        accionesListado.setOpaque(false);
+        for(JButton b:new JButton[]{nuevo,editar,baja,activar}){accionesListado.add(b);accionesProductos.add(b);}
+        arriba.add(accionesListado,BorderLayout.SOUTH);
         raiz.add(arriba,BorderLayout.NORTH);
-        JTable tabla=new JTable(tablaProductos);vistaProductos=tabla;tabla.setRowHeight(27);tabla.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        tabla.setAutoCreateRowSorter(true);raiz.add(new JScrollPane(tabla),BorderLayout.CENTER);
+        JTable tabla=new JTable(tablaProductos);vistaProductos=tabla;tabla.setRowHeight(34);tabla.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        tabla.setAutoCreateRowSorter(true);
+        // El estado se distingue sin depender exclusivamente del color.
+        tabla.getColumnModel().getColumn(4).setCellRenderer(new javax.swing.table.DefaultTableCellRenderer(){
+            @Override public Component getTableCellRendererComponent(JTable t,Object v,boolean seleccionado,
+                boolean foco,int fila,int columna){
+                super.getTableCellRendererComponent(t,v,seleccionado,foco,fila,columna);
+                setHorizontalAlignment(SwingConstants.CENTER);
+                setFont(getFont().deriveFont(Font.BOLD));
+                if(!seleccionado)setForeground("ACTIVO".equals(String.valueOf(v))?
+                    new Color(25,111,77):TemaVisual.SECUNDARIO);
+                return this;
+            }
+        });
+        raiz.add(new JScrollPane(tabla),BorderLayout.CENTER);
+        JPanel pieProductos=new JPanel(new BorderLayout());
+        pieProductos.setOpaque(false);
+        conteoProductos.setFont(new Font("Segoe UI",Font.PLAIN,12));
+        conteoProductos.setForeground(TemaVisual.SECUNDARIO);
+        pieProductos.add(conteoProductos,BorderLayout.WEST);
+        JButton exportarInventario=new JButton("Exportar inventario CSV");
+        accionesProductos.add(exportarInventario);
+        pieProductos.add(exportarInventario,BorderLayout.EAST);
+        raiz.add(pieProductos,BorderLayout.SOUTH);
+        exportarInventario.addActionListener(e->ejecutar(()->{
+            if(!sesion.administrador())throw new SecurityException("Solo administradores pueden exportar inventario");
+            Path destino=destinoCsv("inventario_SIGAM-POS.csv");
+            if(destino!=null)mensaje("Productos exportados: "+exportacion.inventario(destino,filtro.getText()));
+        }));
         alCambiar(filtro,()->ejecutar(()->cargarProductos(filtro.getText())));
         nuevo.addActionListener(e->ejecutar(()->editarProducto(null,filtro.getText())));
         editar.addActionListener(e->ejecutar(()->editarProducto(productoSeleccionado(tabla),filtro.getText())));
@@ -343,49 +679,189 @@ public final class VentanaPrincipal extends JFrame {
     }
     private void cargarProductos(String filtro)throws SQLException {
         tablaProductos.setRowCount(0);
-        for(Producto p:productos.listar(filtro))tablaProductos.addRow(new Object[]{p.codigo(),p.nombre(),Moneda.formato(p.precioVenta()),p.stock(),p.activo()?"ACTIVO":"INACTIVO"});
+        int activos=0;
+        for(Producto p:productos.listar(filtro)){
+            tablaProductos.addRow(new Object[]{p.codigo(),p.nombre(),Moneda.formato(p.precioVenta()),p.stock(),p.activo()?"ACTIVO":"INACTIVO"});
+            if(p.activo())activos++;
+        }
+        conteoProductos.setText(tablaProductos.getRowCount()+" productos encontrados · "+activos+" activos");
     }
     private void editarProducto(Producto anterior,String filtro)throws Exception {
-        JTextField codigo=new JTextField(anterior==null?"":anterior.codigo()),nombre=new JTextField(anterior==null?"":anterior.nombre()),
-            precio=new CampoMoneda(anterior==null?BigDecimal.ZERO:anterior.precioVenta()),
-            costo=new CampoMoneda(anterior==null?BigDecimal.ZERO:anterior.costo()),
-            stock=new JTextField(anterior==null?"0":String.valueOf(anterior.stock())),
-            min=new JTextField(anterior==null||anterior.stockMinimo()==null?"":anterior.stockMinimo().toString()),
-            max=new JTextField(anterior==null||anterior.stockMaximo()==null?"":anterior.stockMaximo().toString());
+        JTextField codigo=new JTextField(anterior==null?"":anterior.codigo());
+        JTextField nombre=new JTextField(anterior==null?"":anterior.nombre());
+        CampoMoneda precio=new CampoMoneda(anterior==null?BigDecimal.ZERO:anterior.precioVenta());
+        CampoMoneda costo=new CampoMoneda(anterior==null?BigDecimal.ZERO:anterior.costo());
+        JTextField stock=new JTextField(anterior==null?"0":String.valueOf(anterior.stock()));
+        JTextField min=new JTextField(anterior==null||anterior.stockMinimo()==null?"":anterior.stockMinimo().toString());
+        JTextField max=new JTextField(anterior==null||anterior.stockMaximo()==null?"":anterior.stockMaximo().toString());
         codigo.setEditable(anterior==null);
-        JPanel panel=form("Código de producto",codigo,"Nombre",nombre,"Precio venta ($)",precio,
-            "Costo ($)",costo,"Stock",stock,"Stock mínimo (opcional)",min,"Stock máximo (opcional)",max);
-        if(JOptionPane.showConfirmDialog(this,panel,anterior==null?"Crear producto":"Editar producto",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;
+
+        boolean calcularPorcentaje=configuracionProductos.precioPorRecargoActivo();
+        JPanel panel;
+        JSpinner recargo=null;
+        if(calcularPorcentaje){
+            BigDecimal inicial=anterior==null?new BigDecimal("30"):
+                ConfiguracionProductos.recargoExistente(anterior.costo(),anterior.precioVenta());
+            recargo=new JSpinner(new SpinnerNumberModel(inicial.doubleValue(),0d,10000d,0.5d));
+            ((JSpinner.DefaultEditor)recargo.getEditor()).getTextField().setColumns(10);
+            JLabel vistaPrecio=new JLabel();
+            vistaPrecio.setFont(new Font("Segoe UI",Font.BOLD,17));
+            vistaPrecio.setForeground(TemaVisual.AZUL);
+            final JSpinner selectorRecargo=recargo;
+            Runnable actualizar=()->{
+                try{
+                    BigDecimal nuevoCosto=costo.valor();
+                    BigDecimal porcentaje=new BigDecimal(String.valueOf(selectorRecargo.getValue()));
+                    boolean sinCambios=anterior!=null && nuevoCosto.compareTo(anterior.costo())==0
+                        && porcentaje.compareTo(inicial)==0;
+                    BigDecimal sugerido=sinCambios?anterior.precioVenta():
+                        ConfiguracionProductos.precioSugerido(nuevoCosto,porcentaje);
+                    vistaPrecio.setText(Moneda.formato(sugerido));
+                }catch(RuntimeException ex){vistaPrecio.setText("Ingresá un costo válido");}
+            };
+            recargo.addChangeListener(e->actualizar.run());
+            costo.getDocument().addDocumentListener(new DocumentListener(){
+                private void cambio(){SwingUtilities.invokeLater(actualizar);}
+                public void insertUpdate(DocumentEvent e){cambio();}
+                public void removeUpdate(DocumentEvent e){cambio();}
+                public void changedUpdate(DocumentEvent e){cambio();}
+            });
+            actualizar.run();
+            panel=form("Código de producto",codigo,"Nombre",nombre,"Costo ($)",costo,
+                "Recargo sobre costo (%)",recargo,"Stock",stock,"Stock mínimo (opcional)",min,
+                "Stock máximo (opcional)",max,"Precio de venta (previsualización)",vistaPrecio);
+            panel.setToolTipText("Recargo sobre costo, distinto del margen sobre la venta");
+        } else {
+            panel=form("Código de producto",codigo,"Nombre",nombre,"Precio venta ($)",precio,
+                "Costo ($)",costo,"Stock",stock,"Stock mínimo (opcional)",min,
+                "Stock máximo (opcional)",max);
+        }
+        if(JOptionPane.showConfirmDialog(this,panel,anterior==null?"Crear producto":"Editar producto",
+            JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;
         String clave=codigo.getText().trim();
         if(anterior==null && productos.buscar(clave)!=null)
             throw new IllegalArgumentException("Ya existe un producto con ese código. Seleccionalo y elegí Editar.");
-        Producto p=new Producto(clave,nombre.getText(),importe(precio),importe(costo),enteroNoNegativo(stock,"Stock"),enteroOpcional(min),enteroOpcional(max),anterior==null||anterior.activo());
-        productos.guardar(p);cargarProductos(filtro);cargarCatalogo("");mensaje("Producto guardado correctamente");
+        BigDecimal costoIngresado=costo.valor();
+        BigDecimal precioIngresado;
+        if(calcularPorcentaje){
+            recargo.commitEdit();
+            BigDecimal porcentaje=new BigDecimal(String.valueOf(recargo.getValue()));
+            BigDecimal porcentajeInicial=anterior==null?new BigDecimal("30"):
+                ConfiguracionProductos.recargoExistente(anterior.costo(),anterior.precioVenta());
+            boolean sinCambios=anterior!=null && costoIngresado.compareTo(anterior.costo())==0
+                && porcentaje.compareTo(porcentajeInicial)==0;
+            precioIngresado=sinCambios?anterior.precioVenta():
+                ConfiguracionProductos.precioSugerido(costoIngresado,porcentaje);
+        } else precioIngresado=precio.valor();
+        Producto producto=new Producto(clave,nombre.getText(),precioIngresado,costoIngresado,
+            enteroNoNegativo(stock,"Stock"),enteroOpcional(min),enteroOpcional(max),
+            anterior==null||anterior.activo());
+        productos.guardar(producto);
+        cargarProductos(filtro);cargarCatalogo("");mensaje("Producto guardado correctamente");
     }
     private JPanel panelCaja(){
-        JPanel raiz=new JPanel(new BorderLayout(12,12));raiz.setBorder(BorderFactory.createEmptyBorder(16,16,16,16));
-        JLabel estado=new JLabel("Sin caja activa");estado.setFont(estado.getFont().deriveFont(Font.BOLD,16f));
-        JPanel encabezado=new JPanel(new BorderLayout(6,6));encabezado.add(new JLabel("CAJA · Jornada laboral"),BorderLayout.NORTH);
-        encabezado.add(estado,BorderLayout.CENTER);raiz.add(encabezado,BorderLayout.NORTH);
-        JTextArea resumen=new JTextArea(9,45);resumen.setEditable(false);resumen.setFont(new Font(Font.MONOSPACED,Font.PLAIN,14));
-        resumen.setBorder(BorderFactory.createEmptyBorder(10,10,10,10));
-        JPanel centro=new JPanel(new BorderLayout(8,8));centro.add(new JLabel("Resumen de efectivo y Mercado Pago"),BorderLayout.NORTH);
-        centro.add(new JScrollPane(resumen),BorderLayout.CENTER);raiz.add(centro,BorderLayout.CENTER);
-        JPanel acciones=new JPanel(new FlowLayout(FlowLayout.LEFT,10,8));
-        JButton abrir=new JButton("Iniciar jornada / Abrir caja"),entrada=new JButton("Registrar entrada (+)"),salida=new JButton("Registrar salida (-)"),
-            esperado=new JButton("Actualizar desglose"),historial=new JButton("Historial de movimientos"),
-            movimientoDigital=new JButton("Movimiento Mercado Pago"),cerrar=new JButton("Finalizar jornada (arqueo)");
-        for(JButton b:new JButton[]{abrir,entrada,salida,movimientoDigital,esperado,historial,cerrar})acciones.add(b);
-        JPanel pie=new JPanel(new BorderLayout());pie.add(acciones,BorderLayout.CENTER);
-        pie.add(new JLabel("Cada movimiento solicita un importe y un motivo en un formulario independiente."),BorderLayout.SOUTH);
+        JPanel raiz=new JPanel(new BorderLayout(12,12));
+        raiz.setBorder(BorderFactory.createEmptyBorder(18,18,18,18));
+
+        JLabel estado=new JLabel("Sin caja activa");
+        estado.setFont(new Font("Segoe UI",Font.BOLD,17));
+        estado.setForeground(TemaVisual.AZUL_OSCURO);
+        JPanel encabezado=new JPanel(new BorderLayout(10,4));
+        TemaVisual.tarjeta(encabezado);
+        JLabel titulo=new JLabel("JORNADA DE CAJA");
+        titulo.setFont(new Font("Segoe UI",Font.BOLD,11));
+        titulo.setForeground(TemaVisual.SECUNDARIO);
+        encabezado.add(titulo,BorderLayout.NORTH);
+        encabezado.add(estado,BorderLayout.CENTER);
+        JButton esperado=new JButton("Actualizar saldos");
+        JPanel botonesEncabezado=new JPanel(new FlowLayout(FlowLayout.RIGHT,8,0));
+        botonesEncabezado.setOpaque(false);
+        JButton exportarMovimientos=new JButton("Exportar movimientos CSV");
+        botonesEncabezado.add(exportarMovimientos);
+        botonesEncabezado.add(esperado);
+        encabezado.add(botonesEncabezado,BorderLayout.EAST);
+        exportarMovimientos.addActionListener(e->ejecutar(()->{
+            if(!sesion.administrador())throw new SecurityException("Solo administradores pueden exportar caja");
+            long id=cajaActual();
+            Path destino=destinoCsv("movimientos_caja_"+id+".csv");
+            if(destino!=null)mensaje("Movimientos exportados: "+exportacion.movimientosCaja(destino,id));
+        }));
+        raiz.add(encabezado,BorderLayout.NORTH);
+
+        TarjetaSaldoCaja tarjetaEfectivo=new TarjetaSaldoCaja("Efectivo · Caja física",
+            new String[]{"Fondo inicial","Cobros por ventas","Entradas manuales","Salidas manuales"});
+        TarjetaSaldoCaja tarjetaDigital=new TarjetaSaldoCaja("Mercado Pago · Saldo declarado",
+            new String[]{"Saldo inicial","Cobros digitales","Entradas manuales","Salidas manuales"});
+        JPanel tarjetas=new JPanel(new GridLayout(1,2,12,0));
+        tarjetas.setOpaque(false);
+        tarjetas.add(tarjetaEfectivo);
+        tarjetas.add(tarjetaDigital);
+
+        JPanel actividad=new JPanel(new BorderLayout(0,8));
+        TemaVisual.tarjeta(actividad);
+        JLabel tituloActividad=new JLabel("ÚLTIMOS MOVIMIENTOS DE LA JORNADA");
+        tituloActividad.setFont(new Font("Segoe UI",Font.BOLD,12));
+        tituloActividad.setForeground(TemaVisual.AZUL_OSCURO);
+        actividad.add(tituloActividad,BorderLayout.NORTH);
+        JTextArea movimientos=new JTextArea("Abrí una jornada para ver sus movimientos.");
+        movimientos.setEditable(false);
+        movimientos.setLineWrap(true);
+        movimientos.setWrapStyleWord(true);
+        movimientos.setFont(new Font("Segoe UI",Font.PLAIN,13));
+        movimientos.setBackground(TemaVisual.BLANCO);
+        movimientos.setForeground(TemaVisual.TEXTO);
+        actividad.add(new JScrollPane(movimientos),BorderLayout.CENTER);
+
+        JPanel centro=new JPanel(new BorderLayout(0,12));
+        centro.setOpaque(false);
+        centro.add(tarjetas,BorderLayout.NORTH);
+        centro.add(actividad,BorderLayout.CENTER);
+        raiz.add(centro,BorderLayout.CENTER);
+
+        JPanel acciones=new JPanel(new GridLayout(2,3,10,10));
+        JButton abrir=new JButton("Iniciar jornada / Abrir caja"),
+            entrada=new JButton("Registrar entrada (+)"),salida=new JButton("Registrar salida (-)"),
+            historial=new JButton("Historial de movimientos"),
+            movimientoDigital=new JButton("Movimiento Mercado Pago"),
+            cerrar=new JButton("Finalizar jornada (arqueo)");
+        TemaVisual.botonPrincipal(abrir);
+        for(JButton b:new JButton[]{abrir,entrada,salida,movimientoDigital,historial,cerrar})acciones.add(b);
+        JPanel pie=new JPanel(new BorderLayout(0,9));
+        TemaVisual.tarjeta(pie);
+        pie.add(acciones,BorderLayout.CENTER);
+        JLabel aclaracion=new JLabel("Cada operación registra caja de destino, importe, motivo y responsable.");
+        aclaracion.setForeground(TemaVisual.SECUNDARIO);
+        aclaracion.setFont(new Font("Segoe UI",Font.PLAIN,12));
+        pie.add(aclaracion,BorderLayout.SOUTH);
         raiz.add(pie,BorderLayout.SOUTH);
+
         Runnable actualizar=()->{
-            if(caja.getText().isBlank()) {estado.setText("Sin caja activa · Iniciá una jornada para operar");resumen.setText("No hay caja abierta para esta sesión.");return;}
-            try {estado.setText("Caja #"+caja.getText()+" · Empleado: "+sesion.nombre());
-                String texto=desglose(cajas.resumen(cajaActual()));
-                CajaDigitalServicio.Resumen d=digital.resumen(cajaActual());
-                resumen.setText(texto+"\n\n"+desgloseDigital(d));
-            } catch(Exception e){resumen.setText("No se pudo actualizar el resumen: "+e.getMessage());}
+            if(caja.getText().isBlank()) {
+                estado.setText("Sin caja activa · Iniciá una jornada para operar");
+                tarjetaEfectivo.sinDatos("Sin jornada abierta");
+                tarjetaDigital.sinDatos("Sin jornada abierta");
+                movimientos.setText("Abrí una jornada para consultar sus movimientos.");
+                return;
+            }
+            try {
+                long id=cajaActual();
+                estado.setText("Caja #"+id+" · Responsable: "+(sesion==null?"—":sesion.nombre()));
+                CajaServicio.Resumen efectivo=cajas.resumen(id);
+                tarjetaEfectivo.mostrar(efectivo.esperado(),new BigDecimal[]{
+                    efectivo.fondoInicial(),efectivo.ventasEfectivo(),
+                    efectivo.entradas(),efectivo.salidas()},"Efectivo esperado · Cálculo local");
+                CajaDigitalServicio.Resumen mp=digital.resumen(id);
+                if(mp==null)tarjetaDigital.sinDatos("No habilitada en esta jornada");
+                else tarjetaDigital.mostrar(mp.esperado(),new BigDecimal[]{
+                    mp.inicial(),mp.cobros(),mp.entradas(),mp.salidas()},
+                    "Saldo esperado declarado · Sin API externa");
+                String texto=cajas.historial(id);
+                if(mp!=null)texto+="\n\n"+digital.historial(id);
+                movimientos.setText(texto);
+                movimientos.setCaretPosition(0);
+            } catch(Exception ex) {
+                movimientos.setText("No fue posible consultar la jornada: "+ex.getMessage());
+            }
         };
         caja.getDocument().addDocumentListener(new DocumentListener(){
             public void insertUpdate(DocumentEvent e){SwingUtilities.invokeLater(actualizar);}
@@ -543,9 +1019,13 @@ public final class VentanaPrincipal extends JFrame {
         // GridBag conserva el tamaño natural de las fichas incluso cuando hay pocos empleados.
         JPanel contenedor=new JPanel(new GridBagLayout());
         contenedor.setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
-        JPanel empleados=new JPanel(new BorderLayout(8,8));
+        JPanel empleados=new JPanel(new BorderLayout(10,10));
+        empleados.setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
         JButton alta=new JButton("Crear empleado"),recargar=new JButton("Actualizar empleados");
-        JPanel cabecera=new JPanel(new FlowLayout(FlowLayout.LEFT));cabecera.add(alta);cabecera.add(recargar);
+        TemaVisual.botonPrincipal(alta);
+        JPanel cabecera=new JPanel(new FlowLayout(FlowLayout.LEFT,10,6));
+        cabecera.setOpaque(false);
+        cabecera.add(alta);cabecera.add(recargar);
         empleados.add(cabecera,BorderLayout.NORTH);
         empleados.add(new JScrollPane(contenedor),BorderLayout.CENTER);
         alta.addActionListener(e->ejecutar(()->{
@@ -560,13 +1040,14 @@ public final class VentanaPrincipal extends JFrame {
         secciones.addTab("Empleados",empleados);
 
         JPanel pantallaTurnos=new JPanel(new BorderLayout(8,8));pantallaTurnos.setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
-        JPanel acciones=new JPanel(new FlowLayout(FlowLayout.LEFT,8,8));
+        JPanel acciones=new JPanel(new FlowLayout(FlowLayout.LEFT,9,8));
+        acciones.setBackground(TemaVisual.BLANCO);
         JButton nuevo=new JButton("Crear turno"),editar=new JButton("Modificar turno"),
             asignar=new JButton("Asignar turno"),quitar=new JButton("Quitar asignación"),
             ver=new JButton("Ver empleado asignado"),refrescar=new JButton("Actualizar horarios");
         for(JButton button:new JButton[]{nuevo,editar,asignar,quitar,ver,refrescar})acciones.add(button);
         pantallaTurnos.add(acciones,BorderLayout.NORTH);
-        JTable tabla=new JTable(tablaTurnos);tabla.setRowHeight(27);tabla.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        JTable tabla=new JTable(tablaTurnos);tabla.setRowHeight(35);tabla.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         tabla.addMouseListener(new java.awt.event.MouseAdapter(){@Override public void mouseClicked(java.awt.event.MouseEvent e){
             if(e.getClickCount()==2 && SwingUtilities.isLeftMouseButton(e))
                 ejecutar(()->{gestionarTurno(turnoSeleccionado(tabla));cargarTurnos();cargarFichasEmpleados(contenedor);});
@@ -601,9 +1082,8 @@ public final class VentanaPrincipal extends JFrame {
         int numeroFicha=0;
         for(PersonalServicio.EmpleadoFicha e:personal.listarEmpleados()) {
             JPanel ficha=new JPanel(new BorderLayout(8,8));
-            ficha.setPreferredSize(new Dimension(320,210));
-            ficha.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Color.LIGHT_GRAY),
-                BorderFactory.createEmptyBorder(12,12,12,12)));
+            ficha.setPreferredSize(new Dimension(402,230));
+            TemaVisual.tarjeta(ficha);
             StringBuilder horarios=new StringBuilder("<html>");
             List<Turno> asignados=turnos.asignados(e.id());
             if(asignados.isEmpty())horarios.append("Sin horarios asignados");
@@ -636,14 +1116,14 @@ public final class VentanaPrincipal extends JFrame {
                 cargarFichasEmpleados(contenedor);
             }));
             GridBagConstraints ubicacion=new GridBagConstraints();
-            ubicacion.gridx=numeroFicha%3;ubicacion.gridy=numeroFicha/3;
+            ubicacion.gridx=numeroFicha%2;ubicacion.gridy=numeroFicha/2;
             ubicacion.anchor=GridBagConstraints.NORTHWEST;
             ubicacion.insets=new Insets(5,5,5,5);
             contenedor.add(ficha,ubicacion);
             numeroFicha++;
         }
         GridBagConstraints espacio=new GridBagConstraints();
-        espacio.gridx=3;espacio.gridy=numeroFicha/3+1;
+        espacio.gridx=2;espacio.gridy=numeroFicha/2+1;
         espacio.weightx=1;espacio.weighty=1;
         contenedor.add(Box.createGlue(),espacio);
         contenedor.revalidate();contenedor.repaint();
@@ -725,36 +1205,93 @@ public final class VentanaPrincipal extends JFrame {
         tabs.addTab("Historial de jornadas",panelHistorialJornadas());
         return tabs;
     }
+    /** Resumen con indicadores independientes y pagos desglosados, sin bloques de texto fijo. */
     private JPanel panelResumen(){
-        JPanel panel=new JPanel(new FlowLayout(FlowLayout.LEFT,15,15));
-        JTextField desde=new JTextField(LocalDate.now().minusDays(30).toString(),12),
-            hasta=new JTextField(LocalDate.now().toString(),12);
-        JButton consultar=new JButton("Consultar ventas por período");
-        JTextArea area=new JTextArea(12,65);area.setEditable(false);
-        panel.add(new JLabel("Desde"));panel.add(desde);panel.add(new JLabel("Hasta"));panel.add(hasta);
-        panel.add(consultar);panel.add(new JScrollPane(area));
+        JPanel raiz=new JPanel(new BorderLayout(14,14));
+        raiz.setBorder(BorderFactory.createEmptyBorder(16,16,16,16));
+        JTextField desde=new JTextField(LocalDate.now().minusDays(30).toString(),12);
+        JTextField hasta=new JTextField(LocalDate.now().toString(),12);
+        JButton consultar=new JButton("Consultar período");
+        TemaVisual.botonPrincipal(consultar);
+        JPanel filtros=new JPanel(new FlowLayout(FlowLayout.LEFT,10,5));
+        TemaVisual.tarjeta(filtros);
+        filtros.add(new JLabel("Desde"));filtros.add(desde);
+        filtros.add(new JLabel("Hasta"));filtros.add(hasta);filtros.add(consultar);
+        raiz.add(filtros,BorderLayout.NORTH);
+
+        JLabel cantidad=new JLabel("—"),facturacion=new JLabel("—"),promedio=new JLabel("—");
+        JPanel indicadores=new JPanel(new GridLayout(1,3,12,0));
+        indicadores.setOpaque(false);
+        indicadores.add(tarjetaResumen("VENTAS DEL PERÍODO",cantidad));
+        indicadores.add(tarjetaResumen("FACTURACIÓN NOMINAL",facturacion));
+        indicadores.add(tarjetaResumen("TICKET PROMEDIO",promedio));
+
+        DefaultTableModel modeloPagos=new DefaultTableModel(
+            new Object[]{"Medio de pago","Cantidad de cobros","Importe nominal"},0){
+            @Override public boolean isCellEditable(int fila,int columna){return false;}
+        };
+        JTable tablaPagos=new JTable(modeloPagos);
+        tablaPagos.setAutoCreateRowSorter(true);
+        JPanel pagos=new JPanel(new BorderLayout(0,12));
+        TemaVisual.tarjeta(pagos);
+        JLabel titulo=new JLabel("RECAUDACIÓN POR MEDIO DE PAGO");
+        titulo.setFont(new Font("Segoe UI",Font.BOLD,13));
+        titulo.setForeground(TemaVisual.AZUL_OSCURO);
+        pagos.add(titulo,BorderLayout.NORTH);
+        pagos.add(new JScrollPane(tablaPagos),BorderLayout.CENTER);
+
+        JPanel contenido=new JPanel(new BorderLayout(0,12));
+        contenido.setOpaque(false);
+        contenido.add(indicadores,BorderLayout.NORTH);
+        contenido.add(pagos,BorderLayout.CENTER);
+        raiz.add(contenido,BorderLayout.CENTER);
+        JLabel nota=new JLabel("Importes nominales. Los cobros mixtos se separan por medio, sin duplicar las ventas.");
+        nota.setFont(new Font("Segoe UI",Font.PLAIN,12));
+        nota.setForeground(TemaVisual.SECUNDARIO);
+        raiz.add(nota,BorderLayout.SOUTH);
+
         consultar.addActionListener(e->ejecutar(()->{
             LocalDate a=LocalDate.parse(desde.getText()),b=LocalDate.parse(hasta.getText());
-            var r=analisis.resumen(a,b);
-            StringBuilder sb=new StringBuilder("Cantidad de ventas: "+r.cantidadVentas()+
-                "\nFacturación: "+Moneda.formato(r.montoTotal())+
-                "\nTicket promedio: "+Moneda.formato(r.promedio())+"\n\nPagos por medio:\n");
-            for(var pago:historiales.recaudacion(a,b))sb.append(pago.medio()).append(": ")
-                .append(Moneda.formato(pago.monto())).append(" (pagos: ").append(pago.operaciones()).append(")\n");
-            area.setText(sb.toString());
+            var resumen=analisis.resumen(a,b);
+            cantidad.setText(String.valueOf(resumen.cantidadVentas()));
+            facturacion.setText(Moneda.formato(resumen.montoTotal()));
+            promedio.setText(Moneda.formato(resumen.promedio()));
+            modeloPagos.setRowCount(0);
+            for(var pago:historiales.recaudacion(a,b))
+                modeloPagos.addRow(new Object[]{pago.medio(),pago.operaciones(),Moneda.formato(pago.monto())});
         }));
+        return raiz;
+    }
+
+    private static JPanel tarjetaResumen(String titulo,JLabel dato){
+        JPanel panel=new JPanel(new BorderLayout(0,9));
+        TemaVisual.tarjeta(panel);
+        JLabel nombre=new JLabel(titulo);
+        nombre.setFont(new Font("Segoe UI",Font.BOLD,11));
+        nombre.setForeground(TemaVisual.SECUNDARIO);
+        dato.setFont(new Font("Segoe UI",Font.BOLD,23));
+        dato.setForeground(TemaVisual.AZUL_OSCURO);
+        panel.add(nombre,BorderLayout.NORTH);
+        panel.add(dato,BorderLayout.CENTER);
         return panel;
     }
+
     private JPanel panelHistorialVentas(){
         JPanel raiz=new JPanel(new BorderLayout(8,8));raiz.setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
         JTextField desde=new JTextField(LocalDate.now().minusDays(30).toString(),10),
             hasta=new JTextField(LocalDate.now().toString(),10);
         JComboBox<String> medio=new JComboBox<>(new String[]{"TODOS","EFECTIVO","TRANSFERENCIA","TARJETA","QR"});
-        JButton buscar=new JButton("Consultar"),detalle=new JButton("Ver detalle y pagos");
+        JButton buscar=new JButton("Consultar"),detalle=new JButton("Ver detalle y pagos"),
+            exportarVentas=new JButton("Exportar ventas CSV");
         JPanel filtros=new JPanel(new FlowLayout(FlowLayout.LEFT));
         for(Component a:new Component[]{new JLabel("Desde (AAAA-MM-DD)"),desde,
-            new JLabel("Hasta"),hasta,new JLabel("Medio"),medio,buscar,detalle})filtros.add(a);
+            new JLabel("Hasta"),hasta,new JLabel("Medio"),medio,buscar,detalle,exportarVentas})filtros.add(a);
+        TemaVisual.tarjeta(filtros);
         raiz.add(filtros,BorderLayout.NORTH);
+        JLabel estadoConsulta=new JLabel("Seleccioná un período para consultar las ventas.");
+        estadoConsulta.setForeground(TemaVisual.SECUNDARIO);
+        estadoConsulta.setFont(new Font("Segoe UI",Font.PLAIN,12));
+        raiz.add(estadoConsulta,BorderLayout.SOUTH);
         DefaultTableModel m=new DefaultTableModel(new Object[]{"Venta","Caja","Empleado","Fecha","Total"},0){
             @Override public boolean isCellEditable(int f,int c){return false;}
         };
@@ -765,6 +1302,13 @@ public final class VentanaPrincipal extends JFrame {
             for(var v:historiales.listar(LocalDate.parse(desde.getText()),LocalDate.parse(hasta.getText()),
                   String.valueOf(medio.getSelectedItem())))
                 m.addRow(new Object[]{v.id(),v.cajaId(),v.empleado(),v.fecha(),Moneda.formato(v.total())});
+            estadoConsulta.setText(m.getRowCount()+" ventas encontradas · Doble clic para ver el detalle.");
+        }));
+        exportarVentas.addActionListener(e->ejecutar(()->{
+            if(!sesion.administrador())throw new SecurityException("Solo administradores pueden exportar ventas");
+            Path destino=destinoCsv("ventas_SIGAM-POS.csv");
+            if(destino!=null)mensaje("Ventas exportadas: "+exportacion.historialVentas(destino,
+                LocalDate.parse(desde.getText()),LocalDate.parse(hasta.getText()),String.valueOf(medio.getSelectedItem())));
         }));
         Runnable ver=()->ejecutar(()->{
             int f=tabla.getSelectedRow();if(f<0)throw new IllegalArgumentException("Seleccioná una venta");
@@ -783,10 +1327,16 @@ public final class VentanaPrincipal extends JFrame {
         JTextField desde=new JTextField(LocalDate.now().minusDays(30).toString(),10),
             hasta=new JTextField(LocalDate.now().toString(),10);
         JComboBox<String> estado=new JComboBox<>(new String[]{"TODOS","ABIERTA","CERRADA"});
-        JButton buscar=new JButton("Consultar"),detalle=new JButton("Ver detalle");
+        JButton buscar=new JButton("Consultar"),detalle=new JButton("Ver detalle"),
+            exportarJornadas=new JButton("Exportar caja CSV");
         JPanel filtros=new JPanel(new FlowLayout(FlowLayout.LEFT));
-        for(Component a:new Component[]{new JLabel("Desde"),desde,new JLabel("Hasta"),hasta,new JLabel("Estado"),estado,buscar,detalle})filtros.add(a);
+        for(Component a:new Component[]{new JLabel("Desde"),desde,new JLabel("Hasta"),hasta,new JLabel("Estado"),estado,buscar,detalle,exportarJornadas})filtros.add(a);
+        TemaVisual.tarjeta(filtros);
         raiz.add(filtros,BorderLayout.NORTH);
+        JLabel estadoConsulta=new JLabel("Seleccioná un período para consultar las jornadas.");
+        estadoConsulta.setForeground(TemaVisual.SECUNDARIO);
+        estadoConsulta.setFont(new Font("Segoe UI",Font.PLAIN,12));
+        raiz.add(estadoConsulta,BorderLayout.SOUTH);
         DefaultTableModel m=new DefaultTableModel(new Object[]{"Caja","Empleado","Turno","Apertura","Cierre","Estado","Fondo inicial","Efectivo","MP cobrado","Diferencia"},0){
             @Override public boolean isCellEditable(int f,int c){return false;}
         };
@@ -799,6 +1349,13 @@ public final class VentanaPrincipal extends JFrame {
                 null,"TODOS".equals(filtro)?null:filtro))
                 m.addRow(new Object[]{j.cajaId(),j.empleado(),j.turno(),j.inicio(),j.fin(),j.estado(),
                     Moneda.formato(j.fondo()),Moneda.formato(j.efectivo()),Moneda.formato(j.digital()),Moneda.formato(j.diferencia())});
+            estadoConsulta.setText(m.getRowCount()+" jornadas encontradas · Seleccioná una para ver los movimientos.");
+        }));
+        exportarJornadas.addActionListener(e->ejecutar(()->{
+            if(!sesion.administrador())throw new SecurityException("Solo administradores pueden exportar caja");
+            Path destino=destinoCsv("jornadas_SIGAM-POS.csv");
+            if(destino!=null)mensaje("Jornadas exportadas: "+exportacion.historialJornadas(destino,
+                LocalDate.parse(desde.getText()),LocalDate.parse(hasta.getText()),String.valueOf(estado.getSelectedItem())));
         }));
         detalle.addActionListener(e->ejecutar(()->{
             int f=tabla.getSelectedRow();if(f<0)throw new IllegalArgumentException("Seleccioná una jornada");
@@ -851,7 +1408,28 @@ public final class VentanaPrincipal extends JFrame {
             }
         }
     }
-    private static JPanel form(Object... campos){JPanel p=new JPanel(new GridLayout(campos.length/2,2,8,8));for(Object o:campos){if(o instanceof Component c)p.add(c);else p.add(new JLabel(o.toString()));}return p;}
+    /** Formulario consistente para alta, edición y credenciales (sin cambios de validación). */
+    private static JPanel form(Object... campos) {
+        if(campos.length%2!=0)throw new IllegalArgumentException("Cada campo necesita una etiqueta");
+        JPanel panel=new JPanel(new GridBagLayout());
+        panel.setBorder(BorderFactory.createEmptyBorder(8,12,8,12));
+        GridBagConstraints c=new GridBagConstraints();
+        c.fill=GridBagConstraints.HORIZONTAL;
+        c.anchor=GridBagConstraints.WEST;
+        c.insets=new Insets(6,7,6,7);
+        for(int i=0;i<campos.length;i+=2) {
+            c.gridy=i/2;c.gridx=0;c.weightx=0;
+            JLabel etiqueta=new JLabel(String.valueOf(campos[i]));
+            etiqueta.setFont(new Font("Segoe UI",Font.PLAIN,12));
+            etiqueta.setForeground(TemaVisual.TEXTO);
+            panel.add(etiqueta,c);
+            c.gridx=1;c.weightx=1;
+            Component control=campos[i+1] instanceof Component valor?valor:new JLabel(String.valueOf(campos[i+1]));
+            if(control instanceof JTextField campo)campo.setColumns(Math.max(campo.getColumns(),18));
+            panel.add(control,c);
+        }
+        return panel;
+    }
     private static Integer enteroOpcional(JTextField t){return t.getText().isBlank()?null:Integer.parseInt(t.getText().trim());}
     private static BigDecimal importe(JTextField t){return Moneda.parsear(t.getText());}
     private static int enteroPositivo(JTextField t,String nombre) {

@@ -3,6 +3,10 @@ package ar.com.sigampos.ui;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.geom.Path2D;
+import java.awt.event.MouseEvent;
+import java.awt.event.MouseMotionAdapter;
+import java.text.NumberFormat;
+import java.util.Locale;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -13,14 +17,41 @@ public final class GraficoAnalisis extends JPanel {
     private String titulo="Sin datos";
     private List<Punto> puntos=List.of();
     private final Color azul=new Color(36,112,189),rejilla=new Color(226,232,239);
+    private int resaltado=-1;
 
     public GraficoAnalisis(boolean lineas){
         this.lineas=lineas;setOpaque(true);setBackground(Color.WHITE);
         setPreferredSize(new Dimension(860,265));
-        setBorder(BorderFactory.createEmptyBorder(6,6,6,6));
+        setBorder(BorderFactory.createEmptyBorder(9,9,9,9));
+        setToolTipText(" "); // Activa los tooltips nativos de Swing.
+        addMouseMotionListener(new MouseMotionAdapter(){
+            @Override public void mouseMoved(MouseEvent e){
+                int nuevo=indiceEn(e.getX(),e.getY());
+                if(resaltado!=nuevo){resaltado=nuevo;repaint();}
+            }
+        });
+        addMouseListener(new java.awt.event.MouseAdapter(){
+            @Override public void mouseExited(MouseEvent e){resaltado=-1;repaint();}
+        });
     }
     public void mostrar(String titulo,List<Punto> puntos){
-        this.titulo=titulo;this.puntos=List.copyOf(puntos);repaint();
+        this.titulo=titulo;this.puntos=List.copyOf(puntos);resaltado=-1;repaint();
+    }
+    private int indiceEn(int x,int y){
+        if(puntos.isEmpty())return -1;
+        int izq=60,der=22,arr=41,abajo=40;
+        int ancho=getWidth()-izq-der;
+        if(ancho<=0 || x<izq || x>getWidth()-der || y<arr || y>getHeight()-abajo)return -1;
+        int n=puntos.size();
+        double posicion=(double)(x-izq)/ancho;
+        return Math.max(0,Math.min(n-1,lineas?(int)Math.round(posicion*(n-1)):(int)(posicion*n)));
+    }
+    @Override public String getToolTipText(MouseEvent e){
+        int i=indiceEn(e.getX(),e.getY());
+        if(i<0)return null;
+        Punto p=puntos.get(i);
+        String valor=NumberFormat.getNumberInstance(new Locale("es","AR")).format(p.valor());
+        return p.etiqueta()+": "+(titulo.contains("$")?"$ ":"")+valor;
     }
     @Override protected void paintComponent(Graphics graphics){
         super.paintComponent(graphics);
@@ -67,6 +98,18 @@ public final class GraficoAnalisis extends JPanel {
                     int altoBarra=(int)Math.round(puntos.get(i).valor()/max*alto);
                     g.setColor(azul);g.fillRoundRect(x,arr+alto-altoBarra,anchoBarra,altoBarra,3,3);
                 }
+            }
+            if(resaltado>=0 && resaltado<n){
+                int px=izq+(int)Math.round(lineas?(n==1?ancho/2d:(double)resaltado/(n-1)*ancho)
+                    :((resaltado+.5)*ancho/n));
+                int py=arr+alto-(int)Math.round(puntos.get(resaltado).valor()/max*alto);
+                g.setColor(new Color(22,109,191,65));
+                g.setStroke(new BasicStroke(1f));
+                g.drawLine(px,arr,px,arr+alto);
+                g.setColor(azul);
+                g.fillOval(px-5,py-5,10,10);
+                g.setColor(Color.WHITE);
+                g.fillOval(px-2,py-2,4,4);
             }
             g.setStroke(new BasicStroke(1f));
             int salto=n<=14?1:Math.max(1,(int)Math.ceil(n/9d));
