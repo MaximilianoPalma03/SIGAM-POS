@@ -1,96 +1,71 @@
-# SIGAM-POS — AP3 / TP3 — primera entrega
+# SIGAM-POS — Sistema de Gestión Comercial
 
-Prototipo de escritorio Java (Swing) y MySQL de SIGAM-POS, continuando AP1/AP2. Inspiración en la organización visual del POS de referencia, sin copiar recursos ni depender de su código. **No es el sistema final ni está certificado para uso comercial.**
+**Versión académica 1.0.0 (RC1 validada en pruebas de instalación)** · Aplicación de escritorio para Windows · Java Swing + MySQL
 
-## Requisitos
-- JDK **17 o superior** (se compiló en este entorno con Java 21).
-- MySQL 8.0.16 o superior para que se apliquen los `CHECK`.
-- Maven 3.9+ y conectividad inicial para obtener MySQL Connector/J.
+SIGAM-POS es un sistema de punto de venta y gestión comercial desarrollado para el trabajo práctico de Seminario de Práctica de Informática (AP3/TP3), como continuación del análisis y diseño de AP1/AP2.
 
-## Preparación de MySQL
+## Descargar e instalar
 
-1. Ejecutar `sql/01_esquema.sql` en MySQL (por ejemplo mediante MySQL Workbench).
-2. Crear un usuario de aplicación, no usar `root`. Ejemplo de comandos administrativos para un entorno de desarrollo **local**:
+1. Ir a **Releases** de este repositorio y descargar `SIGAM-POS-Setup.exe` de la versión publicada.
+2. Ejecutar el instalador en **Windows 10/11 de 64 bits** y completar los pasos indicados.
+3. Abrir **SIGAM-POS** desde el acceso directo.
+4. En la primera ejecución, elegir según corresponda:
+   - **Usar base existente:** conectarse a una base `sigam_pos` compatible, utilizando el servidor, puerto y credenciales MySQL vigentes. La aplicación comprueba el esquema sin recrear las tablas.
+   - **Crear instalación local nueva:** inicializar MySQL incluido y crear las tablas necesarias en una nueva instalación. Elegir esta opción únicamente si nunca hubo una base local de SIGAM-POS en ese equipo.
+5. Seguir las indicaciones para configurar la cuenta administrativa inicial cuando corresponda.
 
-```sql
-CREATE USER 'sigam_app'@'localhost' IDENTIFIED BY 'CAMBIAR_ESTA_CLAVE';
-GRANT SELECT, INSERT, UPDATE, DELETE ON sigam_pos.* TO 'sigam_app'@'localhost';
-```
+**Para instalar y utilizar el programa no es necesario instalar Java, Maven, MySQL Server ni MySQL Workbench por separado**: el instalador incorpora Java y una instancia local de MySQL. Windows puede solicitar autorización para instalar componentes.
 
-3. Definir las variables de entorno `SIGAM_DB_USER`, `SIGAM_DB_PASSWORD` y, opcionalmente, `SIGAM_DB_URL` (predeterminada: `jdbc:mysql://localhost:3306/sigam_pos?connectionTimeZone=LOCAL`). Nunca cargar claves en el repositorio.
+> **Conservación de datos:** la desinstalación no elimina intencionalmente la carpeta de datos y configuración de SIGAM-POS ubicada en `%LOCALAPPDATA%\SIGAM-POS`. Al reinstalar, la aplicación intenta reutilizar la configuración anterior. Se recomienda mantener respaldos independientes antes de actualizar, reinstalar o intervenir en el sistema.
 
-PowerShell, en la misma terminal desde la que ejecutes Maven:
+## Funcionalidades
+
+- Inicio de sesión, usuarios, empleados, roles y turnos.
+- Gestión de productos: altas, cambios de precios y costos, inventario, estados y alertas de stock.
+- Ventas con carrito, distintos medios de pago y pagos mixtos; registro de operaciones y actualización de existencias.
+- Gestión de caja física y digital, movimientos, jornadas, arqueos y cierres.
+- Historial y análisis comercial por períodos: ventas, medios de pago, márgenes con costos históricos disponibles, inventario y desempeño.
+- Exportación de informes CSV de inventario, ventas, jornadas y movimientos.
+- Respaldo de MySQL desde la aplicación mediante `mysqldump`, con detección de la herramienta incluida.
+- Asistente de instalación no destructivo: verifica la compatibilidad antes de utilizar una base existente.
+
+## Seguridad de los datos y reinstalación
+
+- **No seleccionar “Crear instalación local nueva”** si existen datos previos que se deben conservar.
+- Ante una base existente incompatible, SIGAM-POS informa el problema sin eliminar las tablas.
+- La instancia MySQL incluida utiliza almacenamiento persistente fuera de la carpeta de instalación.
+- Un respaldo SQL puede contener datos personales y credenciales derivadas: no debe agregarse al repositorio ni compartirse públicamente.
+- El desinstalador elimina los componentes de la aplicación, **no** los datos persistentes del comercio. El usuario es responsable de conservar respaldos.
+
+## Compilar desde el código fuente (solo desarrollo)
+
+Requisitos en el equipo desarrollador: **JDK 17 o superior**, Maven, Windows x64, Inno Setup 6, y el ZIP oficial de **MySQL Community Server 9.7.1 LTS** para Windows x64. Se requiere conexión inicial para descargar dependencias de compilación y el Visual C++ Redistributable oficial, salvo que este último se proporcione localmente.
 
 ```powershell
-$env:SIGAM_DB_USER = "sigam_app"
-$env:SIGAM_DB_PASSWORD = "TU_CLAVE_LOCAL"
+mvn clean test-compile
 ```
 
-## Primera cuenta administrativa
+Para ejecutar desde el código fuente se debe configurar la conexión MySQL correspondiente al entorno de desarrollo, por ejemplo mediante `SIGAM_DB_URL`, `SIGAM_DB_USER` y `SIGAM_DB_PASSWORD` en la terminal actual. No guardar contraseñas en Git.
 
-Ejecutar **una sola vez** desde una terminal interactiva:
+Para construir el instalador en PowerShell (reemplazar la ruta del ZIP por la real):
 
-```sh
-mvn -q compile exec:java -Dexec.mainClass=ar.com.sigampos.InicializarAdmin
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+.\distribucion\Crear-SIGAM-POS-Windows.ps1 -MySqlZip "C:\Descargas\mysql-9.7.1-winx64.zip"
 ```
 
-Se pedirán nombre, DNI, usuario y contraseña. Para ejecutar la interfaz:
+Si la construcción finaliza correctamente, el instalador se encontrará en `dist\SIGAM-POS-Setup.exe`. El constructor usa `jpackage` para incorporar el runtime Java e **Inno Setup** para crear el instalador y registrar la desinstalación.
 
-```sh
-mvn -q compile exec:java -Dexec.mainClass=ar.com.sigampos.Main
-```
+El código fuente conserva los scripts SQL en `sql/`. La compilación incorpora al classpath únicamente el recurso de inicialización necesario para instalaciones nuevas.
 
-La propiedad `-Dexec.mainClass` permite seleccionar qué clase ejecutar. Si el IDE ignora esa propiedad, ejecutar `InicializarAdmin` directamente desde el IDE como clase Java, con el driver JDBC en las dependencias.
+## Pruebas realizadas
 
-## Orden sugerido de primera ejecución
-1. Ingresar como administrador.
-2. En **Personal / Turnos**, crear un turno para el ID del empleado administrador (o crear un vendedor, iniciar sesión como él y usar el turno asignado).
-3. En **Caja**, introducir el ID de turno, el fondo y pulsar **Abrir caja**. Copiar el ID de caja generado.
-4. En **Productos**, crear productos con stock y precios válidos.
-5. En **Ventas**, agregar productos por código y cobrar asignando importes a los medios de pago. Los pagos deben sumar exactamente el total.
-6. En **Caja**, registrar entradas/salidas y luego hacer arqueo y cierre.
-7. En **Análisis**, consultar operaciones por fecha.
+Se verificó la instalación del ejecutable en un equipo con una base MySQL existente, la detección de compatibilidad, la conservación de registros después de desinstalar y reinstalar, y la primera instalación con MySQL incluido en otro equipo sin instalación previa de SIGAM-POS. En esta última se comprobó la persistencia de un producto después de cerrar y volver a abrir. El plan de pruebas y las comprobaciones adicionales están en `distribucion/PLAN-PRUEBAS-WINDOWS-v1.0.0.md`.
 
-## Qué funciona en esta primera base
-- Login asociado a empleado activo y roles para mostrar módulos.
-- Creación de empleado + usuario, alta/modificación de turno y baja lógica de empleado.
-- Productos: alta, modificación por código, búsqueda y baja lógica; historial de cambios de precio.
-- Carrito con cantidades, cobro dividido exacto (efectivo, transferencia, tarjeta, QR), descuento de stock, pago, detalle, venta y movimiento de efectivo **en una única transacción**.
-- Caja: apertura, fondo inicial, entradas/salidas de efectivo con responsable, total esperado, arqueo y cierre transaccional.
-- Análisis inicial: cantidad, monto y ticket promedio por rango de fechas.
-- Modelo POO con clase abstracta `MovimientoCaja` y dos subclases, encapsulamiento en entidades y polimorfismo probado en `PruebaDominio`.
+La restauración de un respaldo SQL se verificó previamente en una base de pruebas separada; nunca debe probarse una restauración sobre la base de producción sin un procedimiento controlado.
 
-## Reglas de negocio que no hay que cambiar con Copilot
-- Un `Usuario` aporta credenciales y rol; un `Empleado` es el responsable histórico de ventas y operaciones.
-- Una caja pertenece a un turno y las ventas de esa caja pertenecen al empleado de ese turno (regla estricta de esta primera versión).
-- `Pago` registra **todos** los medios; `MovimientoCaja` afecta **solo efectivo físico**. Transferencia, tarjeta y QR no suman al efectivo esperado.
-- Fórmula: esperado = fondo inicial + efectivo vendido + entradas manuales − salidas manuales.
-- Baja lógica de productos y empleados: no borrar información histórica.
-- Costo y precio > 0; stock >= 0; stock mínimo/máximo, si se informan, > 0; máximo >= mínimo.
-- Registrar venta y sus efectos de forma atómica (confirmar o revertir todo).
-- Señas, fiados, servicios y clientes quedan fuera del prototipo actual.
+## Alcance
 
-## Limitaciones conocidas y próximas tareas
-- **No se probó la conexión real contra un servidor MySQL** en este entorno. Sí se compiló todo el código y se ejecutaron las pruebas del modelo en Java.
-- La interfaz es una base Swing funcional pero todavía no replica la densidad visual, atajos de teclado, edición de carrito, lector de códigos o desglose de billetes de las capturas.
-- La UI todavía requiere introducir IDs de caja/turno; hay que reemplazarlos por selección automática de turno y caja activos.
-- El dinero en efectivo se cobra por importe exacto; falta manejo de efectivo entregado y vuelto.
-- Los controles de autorización por roles están en la UI; para producción también deben aplicarse en la capa de servicios, con sesiones verificadas.
-- La creación del primer administrador debe endurecerse contra ejecución concurrente, aunque no puede repetirse secuencialmente.
-- La apertura de caja impide otra caja abierta mediante comprobación transaccional en el caso normal, pero falta una restricción para carreras entre dos terminales.
-- El módulo de análisis es inicial: faltan filtros por empleado, medios de pago, rentabilidad histórica y exportación CSV.
-- Hay que implementar ABM completo de empleados/usuarios, búsqueda y actualización más cómoda de turnos, deshabilitación de sesiones, pruebas de integración y verificación de una instalación final.
-- La edición actual de productos se hace por código; al guardar un producto existente, su estado queda activo. Separar modificación y reactivación antes de uso real.
-- No hay soporte de servicios técnicos, señas, descuentos, recargos ni facturación fiscal.
+**Proyecto académico**. SIGAM-POS no emite comprobantes fiscales electrónicos ni debe presentarse como solución certificada de facturación o sistema auditado para producción comercial. Algunas funciones de versiones futuras (como servicios técnicos, señas o integración fiscal) quedan fuera de este alcance.
 
-## Prueba de modelo sin MySQL ni Maven
-
-```sh
-javac -encoding UTF-8 -d compilado $(find src/main/java -name '*.java')
-javac -encoding UTF-8 -cp compilado -d compilado src/test/java/ar/com/sigampos/PruebaDominio.java
-java -ea -cp compilado ar.com.sigampos.PruebaDominio
-```
-
-Para Windows es más sencillo usar `mvn test` en la próxima etapa cuando integremos JUnit.
-
-**Compatibilidad AP2:** El código de producto pasa de `INTEGER` a `VARCHAR(50)` para permitir códigos de barras alfanuméricos. Se agregan `MovimientoCaja.empleado_id` y `ArqueoCaja.empleado_id` para registrar al responsable; la primera versión del TP3 usa una base nueva `sigam_pos`, no modifica automáticamente la BD del AP2. Se deben documentar estos cambios en la próxima revisión de DER y clases.
+El instalador de Windows se publica como **archivo adjunto en GitHub Releases**, no dentro del árbol de código fuente.
