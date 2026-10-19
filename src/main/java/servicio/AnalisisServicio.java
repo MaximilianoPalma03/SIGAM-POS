@@ -4,7 +4,6 @@ import java.sql.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
-/** Primer corte del análisis: métricas objetivas por período, sin rankings subjetivos. */
 public final class AnalisisServicio {
     public record Resumen(long cantidadVentas,BigDecimal montoTotal,BigDecimal promedio) { }
     public Resumen resumen(LocalDate desde,LocalDate hasta)throws SQLException {
