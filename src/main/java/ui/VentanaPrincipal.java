@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.*;
 import java.util.List;
 
-/** Interfaz Swing inspirada en la distribución de trabajo de un POS, no en recursos de terceros. */
+/** Interfaz Swing inspirada en la distribución de trabajo de un POS*/
 public final class VentanaPrincipal extends JFrame {
     private final ProductoServicio productos=new ProductoServicio();
     private final VentaServicio ventas=new VentaServicio();
@@ -137,7 +137,7 @@ public final class VentanaPrincipal extends JFrame {
             } catch(Exception e) {error(e);dispose();}
         });
     }
-    /** Navegación unificada: respeta los mismos índices y permisos que las pestañas originales. */
+    /** Navegación unificada respeta los mismos índices y permisos que las pestañas originales. */
     private JPanel crearBarraNavegacion() {
         JPanel lateral=new JPanel();
         lateral.setBackground(TemaVisual.LATERAL);
@@ -313,7 +313,7 @@ public final class VentanaPrincipal extends JFrame {
             }
         }
     }
-    /** Configuraciones administrativas; la opción se conserva entre reinicios en esta PC. */
+    /** Configuraciones administrativas la opción se conserva entre reinicios en esta PC. */
     private void abrirConfiguraciones(){
         if(sesion==null || !sesion.administrador())
             throw new SecurityException("Solo el administrador puede cambiar la configuración");
