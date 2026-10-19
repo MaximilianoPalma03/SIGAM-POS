@@ -113,9 +113,7 @@ public final class MysqlLocal {
         throw new IOException("MySQL portátil no respondió en 30 segundos. Revisá " + log);
     }
 
-    /** Detención GRACIOSA al salir. Nunca se aplica a MySQL externo (3306).
-     *  No se usa Process.destroy(): una detención abrupta podría dañar InnoDB.
-     */
+
     public static void detenerServidorLocal() {
         Path cliente = mysqlHome().resolve("bin/mysqladmin.exe");
         Path secreto = ConfiguracionBD.datosAplicacion().resolve("mysql-root.dpapi");
