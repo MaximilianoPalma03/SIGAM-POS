@@ -4,7 +4,6 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Objects;
 
-/** POO: abstracción, encapsulamiento y herencia del movimiento físico de efectivo. */
 public abstract class MovimientoCaja {
     private final BigDecimal monto;
     private final String motivo;
